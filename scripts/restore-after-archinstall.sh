@@ -67,14 +67,24 @@ clone_toolkit() {
 
     local os_url="https://github.com/topemalheiro/OS-Toolkit.git"
     local kde_url="https://github.com/topemalheiro/kde-plasma-wayland.git"
+    local layout_url="https://github.com/topemalheiro/VSCodeSidePanelLayout.git"
 
     if [ -n "$GH_TOKEN" ]; then
         os_url="${os_url/https:\/\/github.com\//https:\/\/${GH_TOKEN}@github.com\/}"
         kde_url="${kde_url/https:\/\/github.com\//https:\/\/${GH_TOKEN}@github.com\/}"
+        layout_url="${layout_url/https:\/\/github.com\//https:\/\/${GH_TOKEN}@github.com\/}"
     fi
 
     [ -d "$HOME/Projects/OS-Toolkit/.git" ] || git clone "$os_url" "$HOME/Projects/OS-Toolkit"
     [ -d "$HOME/Projects/KDE-Plasma-on-Wayland/.git" ] || git clone --recurse-submodules "$kde_url" "$HOME/Projects/KDE-Plasma-on-Wayland"
+
+    # VS Code: Side Panel Layout daemon lives inside OS-Toolkit/Reprompty
+    local layout_dir="$HOME/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout"
+    if [ ! -d "$layout_dir/.git" ]; then
+        log_info "Cloning VSCodeSidePanelLayout ..."
+        mkdir -p "$layout_dir"
+        git clone "$layout_url" "$layout_dir"
+    fi
 }
 
 setup_user_env() {
@@ -116,10 +126,36 @@ main() {
     ensure_gh_auth
     clone_toolkit
     setup_user_env
+    build_layout_daemon
 
     echo
     log_info "Done. Log out and back in (or reboot) if KDE was just installed."
     log_info "Custom KWin was NOT built. Run scripts/install-custom-kwin.sh later only if you want it."
+}
+
+build_layout_daemon() {
+    log_info "Building VS Code: Side Panel Layout daemon ..."
+    local layout_dir="$HOME/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout"
+    if [ ! -d "$layout_dir" ]; then
+        log_warn "VSCodeSidePanelLayout not found; skipping layout daemon build."
+        return
+    fi
+
+    sudo pacman -S --needed --noconfirm python python-virtualenv gcc
+
+    cd "$layout_dir"
+    if [ ! -d venv ]; then
+        python3 -m venv venv
+    fi
+    venv/bin/pip install -q cython 2>/dev/null || true
+
+    if [ -x venv/bin/cython ]; then
+        venv/bin/cython --embed -o linux_layout.c linux_layout.py
+        gcc $(python3-config --cflags) linux_layout.c -o reprompty-layout-cython $(python3-config --ldflags --embed)
+        log_info "Layout daemon rebuilt."
+    else
+        log_warn "Cython not available; layout daemon not rebuilt."
+    fi
 }
 
 main "$@"
