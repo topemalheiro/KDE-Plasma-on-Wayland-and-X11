@@ -13,6 +13,9 @@ EXTENSION_DIR="${CHATGPT_EXTENSION_DIR:-$APP_DIR/extension}"
 ICON_FILE="${CHATGPT_ICON_FILE:-$HOME/.local/share/icons/hicolor/32x32/apps/chatgpt-webapp.png}"
 WINDOW_PATTERN="${CHATGPT_WINDOW_PATTERN:-^ChatGPT($|[[:space:]-])}"
 WINDOW_CLASS="${CHATGPT_WINDOW_CLASS:-chatgpt.com.ChatGPTWebApp}"
+SUPERVISOR_SCRIPT="$APP_DIR/chatgpt-webapp-tray.py"
+SUPERVISOR_PID_FILE="$APP_DIR/tray-supervisor.pid"
+SUPERVISOR_LOG_FILE="$APP_DIR/tray-supervisor.log"
 
 INTERNAL_BROWSER_MODE=false
 if [ "${1:-}" = "--internal-browser" ]; then
@@ -136,8 +139,43 @@ launch_browser_background() {
     esac
 }
 
+supervisor_pid() {
+    [ -f "$SUPERVISOR_PID_FILE" ] || return 1
+
+    local pid
+    pid="$(tr -d '[:space:]' < "$SUPERVISOR_PID_FILE")"
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" >/dev/null 2>&1 || return 1
+
+    printf '%s\n' "$pid"
+}
+
+signal_supervisor() {
+    local pid
+
+    pid="$(supervisor_pid)" || return 1
+    kill -USR1 "$pid" >/dev/null 2>&1
+}
+
+start_supervisor() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    [ -f "$SUPERVISOR_SCRIPT" ] || return 1
+
+    mkdir -p "$APP_DIR"
+
+    nohup python3 "$SUPERVISOR_SCRIPT" >"$SUPERVISOR_LOG_FILE" 2>&1 &
+}
+
 if [ "$INTERNAL_BROWSER_MODE" = true ]; then
     launch_browser "$@"
+fi
+
+if signal_supervisor; then
+    exit 0
+fi
+
+if start_supervisor; then
+    exit 0
 fi
 
 focus_existing_window && exit 0
