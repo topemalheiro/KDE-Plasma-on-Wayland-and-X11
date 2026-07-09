@@ -6,13 +6,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 APP_DIR="$HOME/.local/share/applications"
+WEBAPP_DIR="$HOME/.local/share/chatgpt-webapp"
 APP_NAME="chatgpt-webapp"
 LAUNCHER="$BIN_DIR/$APP_NAME"
 DESKTOP_FILE="$APP_DIR/$APP_NAME.desktop"
+EXTENSION_DEST="$WEBAPP_DIR/extension"
 
-mkdir -p "$BIN_DIR" "$APP_DIR"
+mkdir -p "$BIN_DIR" "$APP_DIR" "$EXTENSION_DEST"
 
 install -Dm755 "$SCRIPT_DIR/chatgpt-webapp.sh" "$LAUNCHER"
+cp -R "$SCRIPT_DIR/chatgpt-webapp-extension"/. "$EXTENSION_DEST"/
 
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]

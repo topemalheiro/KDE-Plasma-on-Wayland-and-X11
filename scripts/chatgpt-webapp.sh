@@ -9,6 +9,7 @@ set -euo pipefail
 CHATGPT_URL="${CHATGPT_URL:-https://chatgpt.com/}"
 APP_DIR="${CHATGPT_APP_DIR:-$HOME/.local/share/chatgpt-webapp}"
 PROFILE_DIR="$APP_DIR/profile"
+EXTENSION_DIR="${CHATGPT_EXTENSION_DIR:-$APP_DIR/extension}"
 mkdir -p "$PROFILE_DIR"
 
 pick_browser() {
@@ -42,6 +43,7 @@ case "$browser" in
             --app="$CHATGPT_URL" \
             --user-data-dir="$PROFILE_DIR" \
             --profile-directory=Default \
+            --load-extension="$EXTENSION_DIR" \
             --new-window \
             "$@"
         ;;
@@ -50,6 +52,7 @@ case "$browser" in
             --app="$CHATGPT_URL" \
             --user-data-dir="$PROFILE_DIR" \
             --profile-directory=Default \
+            --load-extension="$EXTENSION_DIR" \
             --new-window \
             "$@"
         ;;
@@ -58,6 +61,7 @@ case "$browser" in
             --app="$CHATGPT_URL" \
             --user-data-dir="$PROFILE_DIR" \
             --profile-directory=Default \
+            --load-extension="$EXTENSION_DIR" \
             --new-window \
             "$@"
         ;;
