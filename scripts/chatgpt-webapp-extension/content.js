@@ -1,43 +1,21 @@
 (() => {
-  const TARGET_TEXT = /A workspace member hit a limit/i;
-  const CTA_TEXT = /Turn on auto-reload/i;
-  const HIDDEN_CLASS = 'codex-chatgpt-limit-banner-hidden';
+  const BANNER_SELECTOR = 'div.bg-token-main-surface-secondary.w-full';
+  const TARGET_TEXT = 'A workspace member hit a limit';
+  const CTA_TEXT = 'Turn on auto-reload';
 
-  const style = document.createElement('style');
-  style.textContent = `.${HIDDEN_CLASS} { display: none !important; }`;
-  document.documentElement.appendChild(style);
-
-  function hideBanner(node) {
-    if (!(node instanceof Element)) {
-      return;
-    }
-
-    const wrapper = node.closest('div.bg-token-main-surface-secondary') || node;
-    wrapper.classList.add(HIDDEN_CLASS);
-  }
-
-  function scan(root = document) {
-    const nodes = root.querySelectorAll('p, button, div');
-    for (const node of nodes) {
-      const text = (node.textContent || '').trim();
-      if (!TARGET_TEXT.test(text) && !CTA_TEXT.test(text)) {
-        continue;
-      }
-
-      if (TARGET_TEXT.test(text)) {
-        hideBanner(node);
-      } else {
-        const parent = node.closest('div.bg-token-main-surface-secondary');
-        if (parent && TARGET_TEXT.test(parent.textContent || '')) {
-          hideBanner(parent);
-        }
+  function removeMatchingBanner(root = document) {
+    const banners = root.querySelectorAll(BANNER_SELECTOR);
+    for (const banner of banners) {
+      const text = (banner.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.includes(TARGET_TEXT) && text.includes(CTA_TEXT)) {
+        banner.remove();
       }
     }
   }
 
-  scan();
+  removeMatchingBanner();
 
-  const observer = new MutationObserver(() => scan());
+  const observer = new MutationObserver(() => removeMatchingBanner());
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
