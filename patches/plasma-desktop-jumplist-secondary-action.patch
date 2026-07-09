@@ -1,0 +1,66 @@
+diff --git a/applets/taskmanager/qml/ContextMenu.qml b/applets/taskmanager/qml/ContextMenu.qml
+index c3c3502..f73fd87 100644
+--- a/applets/taskmanager/qml/ContextMenu.qml
++++ b/applets/taskmanager/qml/ContextMenu.qml
+@@ -90,6 +90,36 @@ PlasmaExtras.Menu {
+             `, parent) as PlasmaExtras.MenuItem;
+     }
+ 
++    function groupJumpListActions(actions: var): var {
++        const result = [];
++
++        for (let i = 0; i < actions.length; ++i) {
++            const action = actions[i];
++            const text = action.text;
++
++            // Pair jump list entries with their adjacent pin or unpin action.
++            if (i + 1 < actions.length) {
++                const nextText = actions[i + 1].text;
++                const unpinMatch = nextText.startsWith("Unpin ") ? nextText.substring(6) : null;
++                const pinMatch = nextText.startsWith("Pin ") ? nextText.substring(4) : null;
++                const pairedName = unpinMatch || pinMatch;
++
++                if (pairedName && pairedName === text) {
++                    result.push({
++                        isGroup: true,
++                        actions: [action, actions[i + 1]],
++                    });
++                    ++i;
++                    continue;
++                }
++            }
++
++            result.push({ isGroup: false, action: action });
++        }
++
++        return result;
++    }
++
+     function loadDynamicLaunchActions(launcherUrl: url): void {
+         let sections = [];
+ 
+@@ -143,9 +173,22 @@ PlasmaExtras.Menu {
+                 }
+             }
+ 
+-            for (var i = 0; i < section["actions"].length; ++i) {
++            let actionsToRender = section["actions"];
++
++            if (section.group === "actions") {
++                actionsToRender = groupJumpListActions(actionsToRender);
++            }
++
++            for (var i = 0; i < actionsToRender.length; ++i) {
++                var entry = actionsToRender[i];
+                 var item = newMenuItem(menu);
+-                item.action = section["actions"][i];
++
++                if (entry.isGroup) {
++                    item.action = entry.actions[0];
++                    item.secondaryAction = entry.actions[1];
++                } else {
++                    item.action = entry.action || entry;
++                }
+ 
+                 textMetrics.text = item.action.text.replace("&", "&&");
+                 item.action.text = textMetrics.elidedText;

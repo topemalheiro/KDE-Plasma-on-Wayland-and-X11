@@ -28,6 +28,8 @@ fi
 KDE_ROOT="${KDE_ROOT:-$HOME/Projects/KDE-Plasma-on-Wayland}"
 KWIN_SRC="${KWIN_SRC:-$KDE_ROOT/kde-kwin}"
 KWIN_BUILD="${KWIN_BUILD:-$KWIN_SRC/build}"
+STATE_DIR="${KDE_POST_REPAIR_STATE_DIR:-/var/lib/kde-post-repair}"
+KWIN_STAMP="$STATE_DIR/kwin-build-info.json"
 
 # Extra packages needed to build KWin on top of a standard Plasma install.
 BUILD_DEPS=(
@@ -83,19 +85,24 @@ build_and_install() {
     mkdir -p "$KWIN_BUILD"
     cd "$KWIN_BUILD"
 
-    # Configure only if not already configured
-    if [ ! -f CMakeCache.txt ]; then
-        cmake .. \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF
-    fi
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=OFF
 
     # Build using all cores
     cmake --build . --parallel "$(nproc)"
 
     # Install
     cmake --install .
+    mkdir -p "$STATE_DIR"
+    cat > "$KWIN_STAMP" <<EOF
+{
+  "source": "$KWIN_SRC",
+  "installed_at": "$(date -Iseconds)",
+  "git_commit": "$(git -C "$KWIN_SRC" rev-parse HEAD 2>/dev/null || echo unknown)"
+}
+EOF
 
     log_info "Custom KWin installed."
 }

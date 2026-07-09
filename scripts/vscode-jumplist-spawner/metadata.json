@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "",
+                "Name": "Custom"
+            }
+        ],
+        "Id": "vscode-jumplist-spawner",
+        "License": "MIT",
+        "Name": "VS Code: Jump List Spawner",
+        "Version": "1.0"
+    }
+}

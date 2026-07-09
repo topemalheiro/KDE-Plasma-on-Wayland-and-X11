@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/package-baseline.sh"
+
 GH_TOKEN="${GH_TOKEN:-}"
 SETUP_REPOS="${SETUP_REPOS:-true}"
 BUILD_KWIN="${BUILD_KWIN:-true}"
@@ -22,23 +25,12 @@ die() { log_err "$1"; exit 1; }
 
 install_packages() {
     log_info "Installing packages ..."
-    sudo pacman -S --needed --noconfirm \
-        mesa vulkan-intel intel-media-driver libva-intel-driver \
-        plasma kde-applications \
-        sddm sddm-kcm konsole dolphin kate ark okular \
-        plasma-pa plasma-nm kwalletmanager \
-        noto-fonts noto-fonts-cjk noto-fonts-emoji \
-        ttf-dejavu ttf-liberation ttf-font-awesome \
-        firefox chromium code docker docker-compose \
-        flatpak pacman-contrib github-cli p7zip unzip unrar \
-        pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber \
-        extra-cmake-modules cmake ninja git
+    sudo pacman -S --needed --noconfirm "${KDE_POST_REPAIR_BASELINE_PACKAGES[@]}"
 }
 
 enable_services() {
     log_info "Enabling services ..."
-    sudo systemctl enable --now sddm.service NetworkManager.service \
-        bluetooth.service fstrim.timer docker.service 2>/dev/null || true
+    sudo systemctl enable --now "${KDE_POST_REPAIR_BASELINE_SYSTEM_SERVICES[@]}" 2>/dev/null || true
 }
 
 clone_repos() {

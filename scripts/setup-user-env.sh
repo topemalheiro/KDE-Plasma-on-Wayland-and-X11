@@ -26,8 +26,8 @@ DESKTOP_MANIFEST="$OS_TOOLKIT_DIR/desktop-repos-manifest.txt"
 FILE_MANIFEST="$OS_TOOLKIT_DIR/file-shortcuts-manifest.txt"
 
 # Exclusions (can be overridden by env)
-EXCLUDE_CV_FOLDER="${EXCLUDE_CV_FOLDER:-false}
-EXCLUDE_CV_PROJECT="${EXCLUDE_CV_PROJECT:-true}
+EXCLUDE_CV_FOLDER="${EXCLUDE_CV_FOLDER:-false}"
+EXCLUDE_CV_PROJECT="${EXCLUDE_CV_PROJECT:-true}"
 
 is_excluded_project() {
     local folder="$1"
@@ -59,7 +59,7 @@ clone_or_update() {
 
     # Inject GH_TOKEN into HTTPS URLs for private repos
     if [ -n "${GH_TOKEN:-}" ]; then
-        url="${url/https:\/\/github.com\/ /https:\/\/${GH_TOKEN}@github.com\/}"
+        url="${url/https:\/\/github.com\//https:\/\/${GH_TOKEN}@github.com\/}"
     fi
 
     if [ -d "$dest/.git" ]; then

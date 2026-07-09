@@ -756,10 +756,15 @@ FocusScope {
                     anchors.top: backgroundArea.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.topMargin: Kirigami.Units.smallSpacing
+                    z: 2
                     width: Math.min(desktopNameLabel.implicitWidth + Kirigami.Units.largeSpacing, backgroundArea.width)
                     height: desktopNameLabel.implicitHeight + Kirigami.Units.smallSpacing
-                    opacity: gridVal
-                    visible: opacity > 0
+                    // Keep labels visible whenever Grid View is active. After some
+                    // Plasma/KWin upgrades the grid animation state can desync,
+                    // which leaves the desktop previews visible but fades the
+                    // label container to 0.
+                    opacity: gridVal > 0 ? 1 : 0
+                    visible: gridVal > 0
 
                     Rectangle {
                         anchors.fill: parent

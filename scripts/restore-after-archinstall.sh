@@ -11,6 +11,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/package-baseline.sh"
+
 GH_TOKEN="${GH_TOKEN:-}"
 SETUP_REPOS="${SETUP_REPOS:-true}"
 EXCLUDE_CV_FOLDER="${EXCLUDE_CV_FOLDER:-false}"
@@ -23,22 +26,12 @@ die() { log_err "$1"; exit 1; }
 
 install_packages() {
     log_info "Installing extra packages ..."
-    sudo pacman -S --needed --noconfirm \
-        git curl wget openssh github-cli \
-        docker docker-compose flatpak pacman-contrib \
-        firefox chromium code \
-        noto-fonts noto-fonts-cjk noto-fonts-emoji \
-        ttf-dejavu ttf-liberation ttf-font-awesome \
-        p7zip unzip unrar \
-        pipewire pipewire-pulse pipewire-alsa pipewire-jack wireplumber \
-        mesa vulkan-intel intel-media-driver libva-intel-driver \
-        extra-cmake-modules cmake ninja
+    sudo pacman -S --needed --noconfirm "${KDE_POST_REPAIR_BASELINE_PACKAGES[@]}"
 }
 
 enable_services() {
     log_info "Enabling services ..."
-    sudo systemctl enable --now sddm.service NetworkManager.service \
-        bluetooth.service fstrim.timer docker.service 2>/dev/null || true
+    sudo systemctl enable --now "${KDE_POST_REPAIR_BASELINE_SYSTEM_SERVICES[@]}" 2>/dev/null || true
 }
 
 ensure_gh_auth() {

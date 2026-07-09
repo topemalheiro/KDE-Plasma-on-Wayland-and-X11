@@ -12,6 +12,14 @@ PROFILE_DIR="$APP_DIR/profile"
 EXTENSION_DIR="${CHATGPT_EXTENSION_DIR:-$APP_DIR/extension}"
 ICON_FILE="${CHATGPT_ICON_FILE:-$HOME/.local/share/icons/hicolor/32x32/apps/chatgpt-webapp.png}"
 WINDOW_PATTERN="${CHATGPT_WINDOW_PATTERN:-^ChatGPT($|[[:space:]-])}"
+WINDOW_CLASS="${CHATGPT_WINDOW_CLASS:-chatgpt.com.ChatGPTWebApp}"
+
+INTERNAL_BROWSER_MODE=false
+if [ "${1:-}" = "--internal-browser" ]; then
+    INTERNAL_BROWSER_MODE=true
+    shift
+fi
+
 mkdir -p "$PROFILE_DIR"
 
 pick_browser() {
@@ -41,11 +49,44 @@ focus_existing_window() {
 
     window_id="$(
         wmctrl -lx 2>/dev/null \
-            | awk 'tolower($0) ~ /chatgptwebapp/ || $0 ~ /ChatGPT/ { print $1; exit }'
+            | awk -v window_class="$WINDOW_CLASS" '
+                $3 == window_class || tolower($0) ~ /chatgptwebapp/ || $0 ~ /ChatGPT/ {
+                    print $1
+                    exit
+                }
+            '
     )"
     [ -n "$window_id" ] || return 1
 
     wmctrl -ia "$window_id" >/dev/null 2>&1
+}
+
+find_chatgpt_window() {
+    command -v wmctrl >/dev/null 2>&1 || return 1
+
+    wmctrl -lx 2>/dev/null \
+        | awk -v window_class="$WINDOW_CLASS" '
+            $3 == window_class || tolower($0) ~ /chatgptwebapp/ || $0 ~ /ChatGPT/ {
+                print $1
+                exit
+            }
+        '
+}
+
+wait_for_chatgpt_window() {
+    local attempt
+    local window_id
+
+    for attempt in $(seq 1 40); do
+        window_id="$(find_chatgpt_window || true)"
+        if [ -n "$window_id" ]; then
+            printf '%s\n' "$window_id"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    return 1
 }
 
 launch_browser() {
@@ -71,22 +112,49 @@ launch_browser() {
     esac
 }
 
-if [ "${CHATGPT_WEBAPP_INTERNAL:-}" = "1" ]; then
+launch_browser_background() {
+    local browser
+
+    browser="$(pick_browser)" || {
+        echo "No supported Chromium-based browser found (chromium, edge, or chrome)." >&2
+        exit 1
+    }
+
+    case "$browser" in
+        chromium|chromium-browser|microsoft-edge-stable|microsoft-edge|google-chrome-stable|google-chrome)
+            "$browser" \
+                --app="$CHATGPT_URL" \
+                --user-data-dir="$PROFILE_DIR" \
+                --profile-directory=Default \
+                --load-extension="$EXTENSION_DIR" \
+                --class=ChatGPTWebApp \
+                --ozone-platform=x11 \
+                --new-window \
+                "$@" \
+                >/dev/null 2>&1 &
+            ;;
+    esac
+}
+
+if [ "$INTERNAL_BROWSER_MODE" = true ]; then
     launch_browser "$@"
 fi
 
 focus_existing_window && exit 0
 
 if command -v kdocker >/dev/null 2>&1 && [ -f "$ICON_FILE" ]; then
-    exec env CHATGPT_WEBAPP_INTERNAL=1 kdocker \
-        -q \
-        -b \
-        --no-iconify-docking \
-        -d 30 \
-        -n "$WINDOW_PATTERN" \
-        -i "$ICON_FILE" \
-        -I "$ICON_FILE" \
-        "$0"
+    launch_browser_background "$@"
+
+    window_id="$(wait_for_chatgpt_window || true)"
+    if [ -n "${window_id:-}" ]; then
+        exec kdocker \
+            -q \
+            -b \
+            --no-iconify-docking \
+            -w "$window_id" \
+            -i "$ICON_FILE" \
+            -I "$ICON_FILE"
+    fi
 fi
 
-CHATGPT_WEBAPP_INTERNAL=1 launch_browser "$@"
+launch_browser "$@"
