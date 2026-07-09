@@ -12,6 +12,7 @@ APP_NAME="chatgpt-webapp"
 LAUNCHER="$BIN_DIR/$APP_NAME"
 DESKTOP_FILE="$APP_DIR/$APP_NAME.desktop"
 EXTENSION_DEST="$WEBAPP_DIR/extension"
+SUPERVISOR_DEST="$WEBAPP_DIR/chatgpt-webapp-tray.py"
 FAVICON_DB="$WEBAPP_DIR/profile/Default/Favicons"
 ICON_256="$ICON_ROOT/256x256/apps/$APP_NAME.png"
 OLD_APPIMAGE="$HOME/.local/opt/chatgpt-desktop/ChatGPT.AppImage"
@@ -85,6 +86,7 @@ disable_stale_appimage_launcher() {
 mkdir -p "$BIN_DIR" "$APP_DIR" "$EXTENSION_DEST"
 
 install -Dm755 "$SCRIPT_DIR/chatgpt-webapp.sh" "$LAUNCHER"
+install -Dm755 "$SCRIPT_DIR/chatgpt-webapp-tray.py" "$SUPERVISOR_DEST"
 cp -R "$SCRIPT_DIR/chatgpt-webapp-extension"/. "$EXTENSION_DEST"/
 install_chatgpt_icon
 

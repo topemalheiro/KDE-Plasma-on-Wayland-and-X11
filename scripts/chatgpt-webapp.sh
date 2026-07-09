@@ -158,12 +158,30 @@ signal_supervisor() {
 }
 
 start_supervisor() {
+    local child_pid
+    local _attempt
+
     command -v python3 >/dev/null 2>&1 || return 1
     [ -f "$SUPERVISOR_SCRIPT" ] || return 1
 
     mkdir -p "$APP_DIR"
 
-    nohup python3 "$SUPERVISOR_SCRIPT" >"$SUPERVISOR_LOG_FILE" 2>&1 &
+    nohup setsid python3 "$SUPERVISOR_SCRIPT" >"$SUPERVISOR_LOG_FILE" 2>&1 < /dev/null &
+    child_pid=$!
+
+    for _attempt in $(seq 1 20); do
+        if supervisor_pid >/dev/null; then
+            return 0
+        fi
+
+        if ! kill -0 "$child_pid" >/dev/null 2>&1; then
+            return 1
+        fi
+
+        sleep 0.25
+    done
+
+    supervisor_pid >/dev/null
 }
 
 if [ "$INTERNAL_BROWSER_MODE" = true ]; then

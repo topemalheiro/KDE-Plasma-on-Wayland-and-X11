@@ -38,6 +38,23 @@ def run_capture(*args: str) -> str:
     return result.stdout
 
 
+def existing_supervisor_pid() -> int | None:
+    try:
+        pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return None
+
+    if pid == os.getpid():
+        return None
+
+    return pid
+
+
 def find_window_id() -> str | None:
     output = run_capture("wmctrl", "-lx")
     for line in output.splitlines():
@@ -138,11 +155,21 @@ def cleanup_pid() -> None:
 
 def main() -> int:
     signal.signal(signal.SIGUSR1, on_signal)
-    signal.signal(signal.SIGTERM, lambda _s, _f: QApplication.quit())
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    running_pid = existing_supervisor_pid()
+    if running_pid is not None:
+        os.kill(running_pid, signal.SIGUSR1)
+        return 0
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("ChatGPT")
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        return 1
+
     tray = QSystemTrayIcon(QIcon(str(ICON_PATH)), app)
     tray.setToolTip("ChatGPT")
 
