@@ -106,6 +106,7 @@ launch_browser() {
                 --app="$CHATGPT_URL" \
                 --user-data-dir="$PROFILE_DIR" \
                 --profile-directory=Default \
+                --disable-extensions-except="$EXTENSION_DIR" \
                 --load-extension="$EXTENSION_DIR" \
                 --class=ChatGPTWebApp \
                 --ozone-platform=x11 \
@@ -129,6 +130,7 @@ launch_browser_background() {
                 --app="$CHATGPT_URL" \
                 --user-data-dir="$PROFILE_DIR" \
                 --profile-directory=Default \
+                --disable-extensions-except="$EXTENSION_DIR" \
                 --load-extension="$EXTENSION_DIR" \
                 --class=ChatGPTWebApp \
                 --ozone-platform=x11 \

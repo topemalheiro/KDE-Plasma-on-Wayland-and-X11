@@ -97,6 +97,7 @@ def browser_command() -> list[str]:
         "--app=https://chatgpt.com/",
         f"--user-data-dir={PROFILE_DIR}",
         "--profile-directory=Default",
+        f"--disable-extensions-except={EXTENSION_DIR}",
         f"--load-extension={EXTENSION_DIR}",
         "--class=ChatGPTWebApp",
         "--ozone-platform=x11",
