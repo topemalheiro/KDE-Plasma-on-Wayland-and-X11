@@ -40,6 +40,8 @@ KDE_POST_REPAIR_BASELINE_PACKAGES=(
     wireplumber
     fish
     fastfetch
+    python-dbus
+    python-gobject
     lolcat
     alacritty
     curl

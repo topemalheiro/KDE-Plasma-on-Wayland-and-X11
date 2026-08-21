@@ -248,6 +248,101 @@ This needs a fix in `plasma-desktop` / `org.kde.plasma.taskmanager`. The broken 
 
 ---
 
+## Issue 5: Dual Touchscreens Swap / Lose Their Display Mapping Mid-Session
+
+### Status: ✅ FIXED (event-driven remapping daemon; upstream limitation remains)
+
+### Problem
+Two USB touchscreens (Verbatim panels on `DP-1` and `HDMI-A-1`). Some minutes
+into a session one panel would stop driving its own screen and its touches
+would land on the *other* screen. Re-running a login-time fix script restored
+it until the next time.
+
+### Root cause
+Three things combine:
+
+1. **The panels are indistinguishable to KDE.** Both report
+   `Silicon Integrated System Co. SiS HID Touch Controller`, vendor `0x0457`,
+   product `0x0819`, with an empty serial. Even `/dev/input/by-id` collapses
+   them to one symlink. Only USB topology tells them apart.
+
+2. **KWin can only remember ONE mapping for the pair.** `Connection::applyDeviceConfig`
+   (`kwin/src/backends/libinput/connection.cpp:715`) keys the config group on
+   vendor + product + name only:
+   ```cpp
+   device->setConfig(m_config->group("Libinput")
+       .group(QString::number(device->vendor()))
+       .group(QString::number(device->product()))
+       .group(device->name()));
+   ```
+   Both panels therefore share one group in `~/.config/kcminputrc`, holding a
+   single `OutputUuid`. Every device-add applies it to *both*.
+
+3. **The panels re-enumerate constantly.** `TurnOffDisplayIdleTimeoutSec=600`
+   means the displays sleep after 10 minutes idle; the monitors then cut their
+   built-in USB hubs. Measured: ~20 hub events per boot, 68 in one 39-hour
+   session. Each one hands KWin a fresh device that it maps from the shared group.
+
+**There is no config-only fix.** A udev/hwdb rename would give KWin two distinct
+groups, but the name comes from `libinput_device_get_name()`
+(`device.cpp:347`) = the kernel's `EVIOCGNAME`; `/sys/class/input/*/name` is
+read-only, hwdb can only set `EVDEV_ABS_*` / `ID_INPUT_*`, and the devices have
+no serial. The mapping must be re-applied at runtime.
+
+### Solution
+`touchscreen-mapping.service` — a systemd user daemon subscribed to KWin's
+`org.kde.KWin.InputDeviceManager.deviceAdded(sysName)` signal, which fires at
+exactly the moment a mapping is lost. It matches devices by persistent udev
+`ID_PATH` and resolves the target output by **EDID hash** rather than connector
+name (connector names renumber; this box has `DP-1`, `DP-3`, `HDMI-A-1`,
+`HDMI-A-4`).
+
+It never writes `kcminputrc` — KWin does that itself inside `setOutputName()`,
+and the last-writer-wins churn in the shared group is expected and harmless.
+
+### Files Created/Modified
+| Path | Purpose |
+|------|---------|
+| `scripts/touchscreen-mapping-daemon.py` | the daemon (`--once`, `--status`, `-v`) |
+| `config/touchscreen-mapping/mapping.json` | USB path → output table; the only place to edit |
+| `config/systemd/user/touchscreen-mapping.service` | unit, bound to `graphical-session.target` |
+| `scripts/install-touchscreen-mapping.sh` | installer + migration off the old autostart entry |
+| `scripts/restore-post-repair.sh`, `scripts/restore-after-archinstall.sh` | now run the installer |
+| `scripts/package-baseline.sh` | added `python-dbus`, `python-gobject` |
+
+Replaced: `~/.config/autostart/fix-touchscreen-mapping.desktop` (moved to
+`~/.config/autostart-disabled/`). The old `~/.local/bin/fix-touchscreen-mapping.sh`
+is still tracked in `bin.git` and can be `git rm`'d there.
+
+### How to Verify
+```bash
+systemctl --user status touchscreen-mapping
+scripts/touchscreen-mapping-daemon.py --status      # exits 1 if any panel is wrong
+
+# Simulate a monitor standby without waiting 10 minutes.
+# NB: `udevadm trigger` does NOT work -- it replays events for an existing
+# device and never makes KWin emit deviceAdded.
+echo 0 | sudo tee /sys/bus/usb/devices/1-13.3/authorized
+sleep 2
+echo 1 | sudo tee /sys/bus/usb/devices/1-13.3/authorized
+journalctl --user -u touchscreen-mapping -n 5
+```
+Confirmed working: with the daemon stopped, one bounce leaves *both* panels on
+`DP-1`; with it running, the journal shows
+`mapped event11 [bottom-left Verbatim] matched-by=usb_path output-by=edid: DP-1 -> HDMI-A-1`.
+
+### Gotcha
+Opening **System Settings → Touch Screen** rewrites the shared group and
+re-collapses both panels onto one output. The daemon corrects it within ~300 ms.
+
+### Upstream
+`connection.cpp:715` should include a per-device discriminator (e.g. udev
+`ID_PATH`) in the config group key when `(vendor, product, name)` is ambiguous,
+so KWin can natively persist a mapping per panel. Until then a daemon is
+required for any pair of identical touchscreens.
+
+---
+
 ## Summary
 
 | Issue | Status | What Was Done |
@@ -256,7 +351,8 @@ This needs a fix in `plasma-desktop` / `org.kde.plasma.taskmanager`. The broken 
 | Image paste failures | ✅ Fixed | Dual clipboard bridge (X11 + Wayland) |
 | Elastic overscroll | ✅ Fixed | App-level flags for VS Code:, Chrome, Edge, Librewolf |
 | Super+Number task manager routing | ⚠️ Watch / upstream | Documented; workaround: restart `plasmashell` |
+| Dual touchscreens lose display mapping | ✅ Fixed | `touchscreen-mapping.service` re-maps on KWin's `deviceAdded`; upstream `connection.cpp:715` limitation documented |
 
 ---
 
-*Last updated: 2026-06-18*
+*Last updated: 2026-08-21*

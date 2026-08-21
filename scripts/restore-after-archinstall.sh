@@ -120,10 +120,21 @@ main() {
     clone_toolkit
     setup_user_env
     build_layout_daemon
+    install_touchscreen_mapping
 
     echo
     log_info "Done. Log out and back in (or reboot) if KDE was just installed."
     log_info "Custom KWin was NOT built. Run scripts/install-custom-kwin.sh later only if you want it."
+}
+
+install_touchscreen_mapping() {
+    log_info "Installing touchscreen -> output mapping daemon ..."
+    local installer="$HOME/Projects/KDE-Plasma-on-Wayland/scripts/install-touchscreen-mapping.sh"
+    if [ -x "$installer" ]; then
+        "$installer" || log_warn "Touchscreen mapping install failed; run $installer by hand."
+    else
+        log_warn "Not found: $installer"
+    fi
 }
 
 build_layout_daemon() {

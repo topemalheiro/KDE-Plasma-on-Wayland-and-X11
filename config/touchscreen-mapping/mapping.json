@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Which touch panel drives which display.",
+    "",
+    "Both panels report the same libinput name/vendor/product and carry no",
+    "serial number, so they can only be told apart by USB topology.",
+    "",
+    "Matching a PANEL (ranked, first hit wins; a tie within a rank is refused):",
+    "  usb_path      - udev ID_PATH, exact. The primary key.",
+    "  usb_port      - substring of ID_PATH, then of the resolved /sys path.",
+    "  usb_revision  - udev ID_USB_REVISION (USB bcdDevice). Port-independent",
+    "                  fallback, used only when unique across panels, so a",
+    "                  panel keeps working if replugged into a different port.",
+    "",
+    "Choosing its OUTPUT:",
+    "  edid_hash     - md5 of the monitor's raw EDID. Preferred: connector",
+    "                  names renumber (this box has DP-1, DP-3, HDMI-A-1,",
+    "                  HDMI-A-4), but the EDID hash does not. Resolved against",
+    "                  /sys/class/drm/*/edid at apply time.",
+    "  output        - connector name. Used only if edid_hash finds nothing,",
+    "                  and as documentation of the intent.",
+    "",
+    "Discover values:",
+    "  scripts/touchscreen-mapping-daemon.py --status",
+    "  udevadm info --query=property --name=/dev/input/event11 | grep ^ID_PATH=",
+    "  for c in /sys/class/drm/card*-*/; do echo \"$c $(md5sum $c/edid)\"; done",
+    "  kscreen-doctor -o",
+    "",
+    "After editing:  systemctl --user reload touchscreen-mapping.service"
+  ],
+  "panels": [
+    {
+      "label": "bottom-left Verbatim",
+      "usb_path": "pci-0000:00:14.0-usb-0:13.3:1.0",
+      "usb_port": "13.3",
+      "usb_revision": "0600",
+      "output": "HDMI-A-1",
+      "edid_hash": "14488ae572dd3395866fd2b57af68a92"
+    },
+    {
+      "label": "bottom-right Verbatim",
+      "usb_path": "pci-0000:00:14.0-usb-0:12.1:1.0",
+      "usb_port": "12.1",
+      "usb_revision": "0200",
+      "output": "DP-1",
+      "edid_hash": "6bd15edc149ed55ad501383b2c94f4a2"
+    }
+  ]
+}

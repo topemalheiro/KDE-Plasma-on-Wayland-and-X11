@@ -1,0 +1,37 @@
+[Unit]
+Description=Bind USB touchscreens to their correct outputs (KWin/Wayland)
+Documentation=file:%h/.config/touchscreen-mapping/mapping.json
+
+# Live and die with the graphical session. Not default.target: that also
+# activates for a TTY or lingering login, where there is no compositor.
+PartOf=graphical-session.target
+
+# Ordering only, deliberately no Requires=/BindsTo=. The daemon watches for the
+# org.kde.KWin bus name itself, so starting before KWin, KWin restarting, or
+# KWin never appearing are all non-events.
+After=plasma-kwin_wayland.service
+
+# A genuine crash loop should give up rather than spin.
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=%h/Projects/KDE-Plasma-on-Wayland/scripts/touchscreen-mapping-daemon.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# The daemon's whole job is to be alive when a hub bounces. It exits 0 (so no
+# restart) if another instance already holds the lock.
+Restart=always
+RestartSec=5
+
+SyslogIdentifier=touchscreen-mapping
+Environment=PYTHONUNBUFFERED=1
+Nice=5
+
+# It only reads /sys, runs udevadm, and talks D-Bus.
+# No ProtectHome=: it also covers /run/user, where the single-instance lock lives.
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

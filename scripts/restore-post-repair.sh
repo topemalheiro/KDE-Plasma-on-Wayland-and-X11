@@ -390,6 +390,7 @@ apply_restore() {
     run_as_target_user "$SCRIPT_DIR/install-vscode-jumplist-integration.sh"
     run_as_target_user "$TARGET_HOME/.local/bin/code-jumplist-manager" refresh >/dev/null 2>&1 || true
     run_as_target_user "$SCRIPT_DIR/install-managed-hubstaff.sh"
+    run_as_target_user "$SCRIPT_DIR/install-touchscreen-mapping.sh"
     run_as_target_user "$SCRIPT_DIR/install-fastfetch-fish.sh"
     move_stale_disabled_autostarts
     sudo env TARGET_USER="$TARGET_USER" TARGET_HOME="$TARGET_HOME" "$SCRIPT_DIR/build-patched-plasma-packages.sh" --apply
