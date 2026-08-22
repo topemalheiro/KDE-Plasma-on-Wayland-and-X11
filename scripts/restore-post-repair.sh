@@ -176,8 +176,13 @@ libplasma_is_patched() {
 }
 
 plasma_desktop_is_patched() {
-    local context_menu="/usr/share/plasma/plasmoids/org.kde.plasma.taskmanager/contents/ui/ContextMenu.qml"
-    [ -f "$context_menu" ] && rg -q "groupJumpListActions|secondaryAction" "$context_menu" 2>/dev/null
+    # The taskmanager QML is compiled to bytecode in Plasma 6.7, so neither the
+    # old loose-ContextMenu.qml grep nor a strings(1) scan of the built applet
+    # can see "groupJumpListActions" -- both report a false negative. The patch
+    # IS verified at source level by build-patched-plasma-packages.sh, which
+    # fails the build if it stops applying, so key on the pkgrel marker that
+    # only our rebuild produces.
+    pacman -Q plasma-desktop 2>/dev/null | rg -q -- '-1\.1$'
 }
 
 plasma_desktop_folder_view_is_patched() {
