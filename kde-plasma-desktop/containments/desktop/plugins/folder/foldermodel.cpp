@@ -19,7 +19,7 @@
 #include <QClipboard>
 #include <QCollator>
 #include <QDir>
-#include <QFileDialog>
+#include <QFileInfo>
 #include <QDrag>
 #include <QImage>
 #include <QItemSelectionModel>
@@ -45,13 +45,12 @@
 #include <KConfigGroup>
 #include <KCoreDirLister>
 #include <KDesktopFile>
-#include <KDirNotify>
-#include <KFileUtils>
 #include <KDirModel>
 #include <KDirWatch>
 #include <KFileCopyToMenu>
 #include <KFileItemActions>
 #include <KFileItemListProperties>
+#include <KPluginMetaData>
 #include <KIO/CopyJob>
 #include <KIO/DeleteJob>
 #include <KIO/DeleteOrTrashJob>
@@ -418,8 +417,50 @@ void FolderModel::newFileMenuItemCreationStarted(const QUrl &url)
     setCreatingNewItems(true);
 }
 
+// KIO's "Create New > Link to File or Directory..." names the symlink from the
+// dialog's default text, which is the URL itself whenever the chosen path ends
+// in '/' -- QUrl::fileName() is empty for a trailing slash, so
+// KNameAndUrlInputDialog falls back to the whole URL. KIO::encodeFileName()
+// then substitutes U+2044 FRACTION SLASH for every '/', producing names like
+// "file:<U+2044><U+2044><U+2044>home<U+2044>user<U+2044>Projects<U+2044>foo".
+// Detect that shape on a freshly created symlink-to-directory and rename it to
+// the target's own basename, which is what the dialog should have suggested.
+static bool looksLikeUnnamedSymlink(const QString &baseName)
+{
+    static const QRegularExpression scheme(QStringLiteral("^[a-zA-Z][a-zA-Z0-9+.-]*:"));
+    return baseName.contains(QChar(0x2044)) || scheme.match(baseName).hasMatch();
+}
+
+static void renameMisnamedSymlink(const QUrl &url)
+{
+    if (!url.isLocalFile()) {
+        return;
+    }
+
+    const QFileInfo info(url.toLocalFile());
+    if (!info.isSymLink() || !looksLikeUnnamedSymlink(info.fileName())) {
+        return;
+    }
+
+    const QFileInfo target(info.symLinkTarget());
+    const QString wantName = target.fileName();
+    if (wantName.isEmpty() || wantName == info.fileName()) {
+        return;
+    }
+
+    const QDir dir = info.dir();
+    QString name = wantName;
+    for (int suffix = 2; dir.exists(name); ++suffix) {
+        name = wantName + QStringLiteral("-%1").arg(suffix);
+    }
+
+    QFile::rename(info.absoluteFilePath(), dir.absoluteFilePath(name));
+}
+
 void FolderModel::newFileMenuItemCreated(const QUrl &url)
 {
+    renameMisnamedSymlink(url);
+
     if (m_usedByContainment && !m_screenMapper->sharedDesktops()) {
         m_screenMapper->addMapping(url, m_screen, m_currentActivity, ScreenMapper::DelayedSignal);
         m_dropTargetPositions.insert(url.fileName(), localMenuPosition());
@@ -840,6 +881,31 @@ void FolderModel::up()
     }
 }
 
+// A symlink to a directory otherwise opens at the symlink's own path
+// (~/Desktop/Name) instead of where it points, so the location bar, the
+// breadcrumb and "up" all refer to the Desktop rather than the real folder.
+// Resolve it, matching what Type=Link .desktop shortcuts already get from the
+// KDesktopFile::readUrl() branches below. Non-symlinks, broken symlinks and
+// symlinks to plain files are returned untouched.
+static QUrl resolveDirectorySymlink(const KFileItem &item, const QUrl &url)
+{
+    if (!item.isLink() || !url.isLocalFile()) {
+        return url;
+    }
+
+    const QFileInfo info(url.toLocalFile());
+    if (!info.isDir()) {
+        return url;
+    }
+
+    const QString resolved = info.canonicalFilePath();
+    if (resolved.isEmpty()) {
+        return url;
+    }
+
+    return QUrl::fromLocalFile(resolved);
+}
+
 void FolderModel::cd(int row)
 {
     if (row < 0) {
@@ -857,7 +923,7 @@ void FolderModel::cd(int row)
                 setUrl(file.readUrl());
             }
         } else {
-            setUrl(item.targetUrl().toString());
+            setUrl(resolveDirectorySymlink(item, item.targetUrl()).toString());
         }
     }
 }
@@ -870,7 +936,7 @@ void FolderModel::run(int row)
 
     KFileItem item = itemForIndex(index(row, 0));
 
-    QUrl url(item.targetUrl());
+    QUrl url(resolveDirectorySymlink(item, item.targetUrl()));
 
     // FIXME TODO: This can go once we depend on a KIO w/ fe1f50caaf2.
     if (url.scheme().isEmpty()) {
@@ -1882,11 +1948,6 @@ void FolderModel::createActions()
     connect(copyLocation, &QAction::triggered, this, &FolderModel::copyLocation);
     m_actionCollection.addAction(QStringLiteral("copyLocation"), copyLocation);
 
-    QAction *createFolderShortcut =
-        new QAction(QIcon::fromTheme(QStringLiteral("emblem-symbolic-link")), i18nc("@action:incontextmenu", "Create Folder Shortcut…"), this);
-    connect(createFolderShortcut, &QAction::triggered, this, &FolderModel::createFolderShortcut);
-    m_actionCollection.addAction(QStringLiteral("createFolderShortcut"), createFolderShortcut);
-
     m_actionCollection.addAction(QStringLiteral("paste"), paste);
     m_actionCollection.addAction(QStringLiteral("pasteto"), pasteTo);
     m_actionCollection.addAction(QStringLiteral("refresh"), refresh);
@@ -2031,6 +2092,45 @@ void FolderModel::updateActions()
     }
 }
 
+// Resolves a selection of `Type=Link` .desktop files to the local directories
+// they point at. Returns an empty list unless *every* item is such a link with
+// a valid local target, so a mixed or partly-resolvable selection leaves the
+// caller's behaviour untouched.
+static KFileItemList resolveLinkedDirectories(const KFileItemList &items)
+{
+    if (items.isEmpty()) {
+        return KFileItemList();
+    }
+
+    KFileItemList targets;
+    targets.reserve(items.count());
+
+    for (const KFileItem &item : items) {
+        if (!item.isDesktopFile()) {
+            return KFileItemList();
+        }
+
+        const QString desktopFilePath = item.localPath();
+        if (desktopFilePath.isEmpty()) {
+            return KFileItemList();
+        }
+
+        const KDesktopFile file(desktopFilePath);
+        if (!file.hasLinkType()) {
+            return KFileItemList();
+        }
+
+        const QUrl targetUrl(file.readUrl());
+        if (!targetUrl.isValid() || !targetUrl.isLocalFile()) {
+            return KFileItemList();
+        }
+
+        targets.append(KFileItem(targetUrl));
+    }
+
+    return targets;
+}
+
 void FolderModel::openContextMenu(QQuickItem *visualParent, Qt::KeyboardModifiers modifiers)
 {
     Q_UNUSED(modifiers)
@@ -2050,7 +2150,6 @@ void FolderModel::openContextMenu(QQuickItem *visualParent, Qt::KeyboardModifier
 
     if (indexes.isEmpty()) {
         menu->addAction(m_actionCollection.action(QStringLiteral("newMenu")));
-        menu->addAction(m_actionCollection.action(QStringLiteral("createFolderShortcut")));
         menu->addSeparator();
         menu->addAction(m_actionCollection.action(QStringLiteral("paste")));
         menu->addAction(m_actionCollection.action(QStringLiteral("undo")));
@@ -2153,6 +2252,57 @@ void FolderModel::openContextMenu(QQuickItem *visualParent, Qt::KeyboardModifier
 
         if (!isTrash && !isTrashLink) {
             m_fileItemActions->addActionsTo(menu);
+
+            // A folder shortcut is a `Type=Link` .desktop file, so the selection's
+            // common MIME type is application/x-desktop. KIO filters kfileitemaction
+            // plugins by that type, hiding everything restricted to inode/directory --
+            // most visibly Dolphin's folder-colour swatch row, which writes
+            // Icon=folder-<colour> into the target folder's .directory file.
+            //
+            // Offer that one plugin the resolved target. Two restrictions are
+            // load-bearing:
+            //
+            //  * A SEPARATE KFileItemActions. KFileItemActions resolves URLs from its
+            //    properties lazily, at trigger time (slotRunApplication,
+            //    slotOpenWithDialog, slotExecuteService), so re-setting the shared
+            //    instance would retroactively retarget the Open With entries
+            //    insertOpenWithActionsTo() already added for the shortcut -- "Open
+            //    With > Kate" would hand Kate the folder instead of the .desktop file.
+            //    Both property sets have to stay alive until the menu is dismissed.
+            //
+            //  * MenuActionSource::Plugins plus an allowlist. Otherwise every
+            //    servicemenu and every other plugin gets redirected too, so any
+            //    inode/directory servicemenu installed later (Compress, a shred/wipe
+            //    entry, an rsync backup) would silently act on the target folder.
+            const KFileItemList linkTargets = m_parseDesktopFiles ? resolveLinkedDirectories(items) : KFileItemList();
+            if (!linkTargets.isEmpty()) {
+                const KFileItemListProperties linkTargetProperties(linkTargets);
+                if (linkTargetProperties.isDirectory() && linkTargetProperties.supportsWriting()) {
+                    static const QString folderIconPlugin = QStringLiteral("setfoldericonitemaction");
+                    QStringList excluded;
+                    bool available = false;
+
+                    const QList<KPluginMetaData> plugins = KPluginMetaData::findPlugins(QStringLiteral("kf6/kfileitemaction"));
+                    for (const KPluginMetaData &plugin : plugins) {
+                        if (plugin.pluginId() == folderIconPlugin) {
+                            available = true;
+                        } else {
+                            excluded.append(plugin.pluginId());
+                        }
+                    }
+
+                    // If the plugin is ever renamed upstream, do nothing rather than
+                    // fall through with an empty excludeList, which would admit every
+                    // plugin -- exactly the blanket redirect this avoids.
+                    if (available) {
+                        if (!m_linkTargetFileItemActions) {
+                            m_linkTargetFileItemActions = new KFileItemActions(this);
+                        }
+                        m_linkTargetFileItemActions->setItemListProperties(linkTargetProperties);
+                        m_linkTargetFileItemActions->addActionsTo(menu, KFileItemActions::MenuActionSource::Plugins, {}, excluded);
+                    }
+                }
+            }
 
             // Copy To, Move To
             KSharedConfig::Ptr dolphin = KSharedConfig::openConfig(QStringLiteral("dolphinrc"));
@@ -2291,64 +2441,6 @@ void FolderModel::copyLocation()
     }
 
     QApplication::clipboard()->setText(paths.join(QStringLiteral("\n")));
-}
-
-void FolderModel::createFolderShortcut()
-{
-    const QUrl dirUrl = resolvedUrl();
-    if (!dirUrl.isLocalFile()) {
-        return;
-    }
-
-    // Deliberately non-modal: getExistingDirectory() would spin a nested event
-    // loop inside plasmashell.
-    auto *dialog = new QFileDialog(nullptr, i18nc("@title:window", "Choose a Folder to Link To"), QDir::homePath());
-    dialog->setFileMode(QFileDialog::Directory);
-    dialog->setOption(QFileDialog::ShowDirsOnly, true);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-
-    connect(dialog, &QFileDialog::fileSelected, this, [dirUrl](const QString &target) {
-        if (target.isEmpty()) {
-            return;
-        }
-
-        // dirName() gives the last component whether or not the picker handed
-        // us a trailing slash. KIO's own "Link to File or Directory" dialog
-        // gets this wrong: a trailing slash makes QUrl::fileName() empty and it
-        // falls back to naming the link after the entire URL.
-        const QString name = QDir(target).dirName();
-        if (name.isEmpty()) {
-            return;
-        }
-
-        const QDir destDir(dirUrl.toLocalFile());
-        QString fileName = name + QLatin1String(".desktop");
-        if (destDir.exists(fileName)) {
-            fileName = KFileUtils::suggestName(dirUrl, fileName);
-        }
-        const QString path = destDir.absoluteFilePath(fileName);
-
-        // Type=Link rather than a symlink: a symlink opens at its own path, so
-        // the location bar would show <view dir>/<name> instead of the target.
-        KDesktopFile desktopFile(path);
-        KConfigGroup group = desktopFile.desktopGroup();
-        group.writeEntry("Type", QStringLiteral("Link"));
-        group.writeEntry("Name", name);
-        // Placeholder: Qt::DecorationRole treats a plain "folder" as "no
-        // preference" and derives from the target, so its colour shows through.
-        // An icon chosen later in Properties overrides it.
-        group.writeEntry("Icon", QStringLiteral("folder"));
-        group.writeEntry("URL", QUrl::fromLocalFile(target).toString());
-        desktopFile.sync();
-
-        // KDE will not trust a user-owned launcher without the executable bit.
-        QFile::setPermissions(path,
-                              QFile::permissions(path) | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
-
-        org::kde::KDirNotify::emitFilesAdded(dirUrl);
-    });
-
-    dialog->open();
 }
 
 void FolderModel::cut()

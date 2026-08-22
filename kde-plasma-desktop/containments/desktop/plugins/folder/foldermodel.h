@@ -250,7 +250,6 @@ public:
     Q_INVOKABLE void paste();
     Q_INVOKABLE void copy();
     Q_INVOKABLE void copyLocation();
-    Q_INVOKABLE void createFolderShortcut();
     Q_INVOKABLE void cut();
     Q_INVOKABLE void deleteSelected();
     Q_INVOKABLE void undo();
@@ -363,6 +362,11 @@ private:
     KActionCollection m_actionCollection;
     KNewFileMenu *m_newMenu;
     KFileItemActions *m_fileItemActions;
+    // Separate instance for actions offered against a link shortcut's target
+    // directory; see the comment in openContextMenu(). Must be a member, not a
+    // local: the QActions it creates outlive openContextMenu() and their slots
+    // dereference it when the user finally clicks.
+    KFileItemActions *m_linkTargetFileItemActions = nullptr;
     KFileCopyToMenu *m_copyToMenu;
     Status m_status = Status::None;
     QString m_errorString;

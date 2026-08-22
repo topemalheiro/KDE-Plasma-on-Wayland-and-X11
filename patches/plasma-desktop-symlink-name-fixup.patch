@@ -1,0 +1,62 @@
+--- a/containments/desktop/plugins/folder/foldermodel.cpp
++++ b/containments/desktop/plugins/folder/foldermodel.cpp
+@@ -20,6 +20,7 @@
+ #include <QCollator>
+ #include <QDir>
+ #include <QFileInfo>
++#include <QRegularExpression>
+ #include <QDrag>
+ #include <QImage>
+ #include <QItemSelectionModel>
+@@ -417,8 +418,51 @@
+     setCreatingNewItems(true);
+ }
+ 
++// KIO's "Create New > Link to File or Directory..." names the symlink from
++// the dialog's default text, which is the URL itself whenever the chosen path
++// ends in '/' -- QUrl::fileName() is empty for a trailing slash, so
++// KNameAndUrlInputDialog falls back to the whole URL (knameandurlinputdialog.cpp
++// slotURLTextChanged()). KIO::encodeFileName() then substitutes U+2044
++// FRACTION SLASH for every '/', producing names like
++// "file:<U+2044><U+2044><U+2044>home<U+2044>user<U+2044>Projects<U+2044>foo".
++// Detect that shape on a freshly created symlink-to-directory and rename it to
++// the target's own basename, which is what the dialog should have suggested.
++static bool looksLikeUnnamedSymlink(const QString &baseName)
++{
++    static const QRegularExpression scheme(QStringLiteral("^[a-zA-Z][a-zA-Z0-9+.-]*:"));
++    return baseName.contains(QChar(0x2044)) || scheme.match(baseName).hasMatch();
++}
++
++static void renameMisnamedSymlink(const QUrl &url)
++{
++    if (!url.isLocalFile()) {
++        return;
++    }
++
++    const QFileInfo info(url.toLocalFile());
++    if (!info.isSymLink() || !looksLikeUnnamedSymlink(info.fileName())) {
++        return;
++    }
++
++    const QFileInfo target(info.symLinkTarget());
++    const QString wantName = target.fileName();
++    if (wantName.isEmpty() || wantName == info.fileName()) {
++        return;
++    }
++
++    const QDir dir = info.dir();
++    QString name = wantName;
++    for (int suffix = 2; dir.exists(name); ++suffix) {
++        name = wantName + QStringLiteral("-%1").arg(suffix);
++    }
++
++    QFile::rename(info.absoluteFilePath(), dir.absoluteFilePath(name));
++}
++
+ void FolderModel::newFileMenuItemCreated(const QUrl &url)
+ {
++    renameMisnamedSymlink(url);
++
+     if (m_usedByContainment && !m_screenMapper->sharedDesktops()) {
+         m_screenMapper->addMapping(url, m_screen, m_currentActivity, ScreenMapper::DelayedSignal);
+         m_dropTargetPositions.insert(url.fileName(), localMenuPosition());
