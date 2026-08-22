@@ -36,7 +36,7 @@ for link in "$DESKTOP"/*; do
     if [ "$APPLY" = true ]; then
         # Write the replacement BEFORE removing the symlink, so a failure here
         # cannot lose the shortcut. The old version rm'd first.
-        yes | "$MAKER" "$target" "$name" >/dev/null
+        FORCE=1 "$MAKER" "$target" "$name" >/dev/null </dev/null
         [ -f "$DESKTOP/$name.desktop" ] || { echo "  failed to create replacement; symlink left intact" >&2; continue; }
         rm -- "$link"
         echo "  created $name.desktop"

@@ -37,16 +37,26 @@ FOLDER_PATH="$(realpath -m "$FOLDER_PATH")"
 FILENAME="$(printf '%s' "$SHORTCUT_NAME" | tr -d '\000' | tr '/' '-')"
 OUTPUT="$HOME/Desktop/$FILENAME.desktop"
 
+# FORCE=1 skips both prompts, for callers such as
+# scripts/convert-symlinks-to-desktop.sh. Piping `yes` into this script is not a
+# substitute: `yes` then dies of SIGPIPE and, under `set -o pipefail`, aborts the
+# caller mid-way.
+FORCE="${FORCE:-0}"
+
 if [ ! -d "$FOLDER_PATH" ]; then
-    echo "Warning: folder does not exist yet: $FOLDER_PATH" >&2
-    read -r -p "Create it? [y/N] " reply
-    case "$reply" in
-        [Yy]*) mkdir -p "$FOLDER_PATH" ;;
-        *) echo "Cancelled." >&2; exit 1 ;;
-    esac
+    if [ "$FORCE" = "1" ]; then
+        mkdir -p "$FOLDER_PATH"
+    else
+        echo "Warning: folder does not exist yet: $FOLDER_PATH" >&2
+        read -r -p "Create it? [y/N] " reply
+        case "$reply" in
+            [Yy]*) mkdir -p "$FOLDER_PATH" ;;
+            *) echo "Cancelled." >&2; exit 1 ;;
+        esac
+    fi
 fi
 
-if [ -e "$OUTPUT" ]; then
+if [ -e "$OUTPUT" ] && [ "$FORCE" != "1" ]; then
     read -r -p "$OUTPUT already exists. Overwrite? [y/N] " reply
     case "$reply" in
         [Yy]*) ;;
