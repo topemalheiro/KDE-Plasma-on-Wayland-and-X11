@@ -1,7 +1,7 @@
-diff --git a/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderView.qml b/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderView.qml
+diff --git a/containments/desktop/package/contents/ui/FolderView.qml b/containments/desktop/package/contents/ui/FolderView.qml
 index 47d2ad9a20..6b92cfd7b5 100644
---- a/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderView.qml
-+++ b/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderView.qml
+--- a/containments/desktop/package/contents/ui/FolderView.qml
++++ b/containments/desktop/package/contents/ui/FolderView.qml
 @@ -1085,6 +1085,8 @@ FocusScope {
                          updateSelection(event.modifiers);
                      } else if (event.matches(StandardKey.Copy)) {
@@ -11,10 +11,10 @@ index 47d2ad9a20..6b92cfd7b5 100644
                      } else if (event.matches(StandardKey.Paste)) {
                          dir.paste();
                      } else if (event.matches(StandardKey.Cut)) {
-diff --git a/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp b/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp
+diff --git a/containments/desktop/plugins/folder/foldermodel.cpp b/containments/desktop/plugins/folder/foldermodel.cpp
 index 26ed8a2b3a..3f10962bd0 100644
---- a/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp
-+++ b/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp
+--- a/containments/desktop/plugins/folder/foldermodel.cpp
++++ b/containments/desktop/plugins/folder/foldermodel.cpp
 @@ -1849,6 +1849,11 @@ void FolderModel::createActions()
      m_actionCollection.addAction(QStringLiteral("cut"), cut);
      m_actionCollection.addAction(QStringLiteral("undo"), undo);
@@ -83,10 +83,10 @@ index 26ed8a2b3a..3f10962bd0 100644
  void FolderModel::cut()
  {
      if (!m_selectionModel->hasSelection()) {
-diff --git a/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.h b/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.h
+diff --git a/containments/desktop/plugins/folder/foldermodel.h b/containments/desktop/plugins/folder/foldermodel.h
 index c38e1ddc0a..3dcc3fcc27 100644
---- a/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.h
-+++ b/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.h
+--- a/containments/desktop/plugins/folder/foldermodel.h
++++ b/containments/desktop/plugins/folder/foldermodel.h
 @@ -248,6 +248,7 @@ public:
  
      Q_INVOKABLE void paste();

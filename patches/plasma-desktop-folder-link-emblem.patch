@@ -1,7 +1,7 @@
-diff --git a/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp b/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp
+diff --git a/containments/desktop/plugins/folder/foldermodel.cpp b/containments/desktop/plugins/folder/foldermodel.cpp
 index c293c9f53c..26ed8a2b3a 100644
---- a/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp
-+++ b/kde-plasma-desktop/containments/desktop/plugins/folder/foldermodel.cpp
+--- a/containments/desktop/plugins/folder/foldermodel.cpp
++++ b/containments/desktop/plugins/folder/foldermodel.cpp
 @@ -1508,6 +1508,12 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
          return isDir(mapToSource(index), m_dirModel);
      } else if (role == IsLinkRole) {
@@ -36,10 +36,10 @@ index c293c9f53c..26ed8a2b3a 100644
      return QSortFilterProxyModel::data(index, role);
  }
  
-diff --git a/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderItemDelegate.qml b/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderItemDelegate.qml
+diff --git a/containments/desktop/package/contents/ui/FolderItemDelegate.qml b/containments/desktop/package/contents/ui/FolderItemDelegate.qml
 index a137009955..cf062ce0aa 100644
---- a/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderItemDelegate.qml
-+++ b/kde-plasma-desktop/containments/desktop/package/contents/ui/FolderItemDelegate.qml
+--- a/containments/desktop/package/contents/ui/FolderItemDelegate.qml
++++ b/containments/desktop/package/contents/ui/FolderItemDelegate.qml
 @@ -313,6 +313,20 @@ Item {
                      source: main.decoration
                  }

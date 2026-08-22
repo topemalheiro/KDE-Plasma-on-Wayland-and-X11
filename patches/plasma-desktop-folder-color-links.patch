@@ -1,0 +1,73 @@
+--- a/containments/desktop/plugins/folder/foldermodel.cpp
++++ b/containments/desktop/plugins/folder/foldermodel.cpp
+@@ -1999,6 +1999,45 @@
+     }
+ }
+ 
++// Resolves a selection of `Type=Link` .desktop files to the local directories they point at.
++// Returns an empty list unless *every* item in the selection is such a link with a valid, local
++// target URL, so that a mixed or partially-resolvable selection leaves the caller's behaviour
++// untouched.
++static KFileItemList resolveLinkedDirectories(const KFileItemList &items)
++{
++    if (items.isEmpty()) {
++        return KFileItemList();
++    }
++
++    KFileItemList targets;
++    targets.reserve(items.count());
++
++    for (const KFileItem &item : items) {
++        if (!item.isDesktopFile()) {
++            return KFileItemList();
++        }
++
++        const QString desktopFilePath = item.localPath();
++        if (desktopFilePath.isEmpty()) {
++            return KFileItemList();
++        }
++
++        const KDesktopFile file(desktopFilePath);
++        if (!file.hasLinkType()) {
++            return KFileItemList();
++        }
++
++        const QUrl targetUrl(file.readUrl());
++        if (!targetUrl.isValid() || !targetUrl.isLocalFile()) {
++            return KFileItemList();
++        }
++
++        targets.append(KFileItem(targetUrl));
++    }
++
++    return targets;
++}
++
+ void FolderModel::openContextMenu(QQuickItem *visualParent, Qt::KeyboardModifiers modifiers)
+ {
+     Q_UNUSED(modifiers)
+@@ -2119,6 +2158,24 @@
+         menu->addSeparator();
+ 
+         if (!isTrash && !isTrashLink) {
++            // A desktop folder shortcut is a `Type=Link` .desktop file, so the selection's common
++            // MIME type is application/x-desktop. KIO filters kfileitemaction plugins by that type,
++            // which hides every plugin restricted to inode/directory - most visibly Dolphin's folder
++            // colour swatch row, which writes Icon=folder-<colour> into the folder's .directory file.
++            // When the whole selection resolves to existing, writable, local directories, offer those
++            // targets to the plugins instead, so they act on the folder the shortcut points at.
++            // This deliberately affects m_fileItemActions->addActionsTo() alone: `itemProperties` is
++            // left untouched for the Copy To / Move To menu below, and every cut/copy/rename/trash/
++            // delete action comes from m_actionCollection, whose enablement is computed from the
++            // shortcut files in updateActions() and whose slots re-read m_selectionModel directly.
++            const KFileItemList linkTargets = m_parseDesktopFiles ? resolveLinkedDirectories(items) : KFileItemList();
++            if (!linkTargets.isEmpty()) {
++                const KFileItemListProperties linkTargetProperties(linkTargets);
++                if (linkTargetProperties.isLocal() && linkTargetProperties.isDirectory() && linkTargetProperties.supportsWriting()) {
++                    m_fileItemActions->setItemListProperties(linkTargetProperties);
++                }
++            }
++
+             m_fileItemActions->addActionsTo(menu);
+ 
+             // Copy To, Move To

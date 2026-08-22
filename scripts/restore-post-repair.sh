@@ -180,6 +180,25 @@ plasma_desktop_is_patched() {
     [ -f "$context_menu" ] && rg -q "groupJumpListActions|secondaryAction" "$context_menu" 2>/dev/null
 }
 
+plasma_desktop_folder_view_is_patched() {
+    local delegate="/usr/share/plasma/plasmoids/org.kde.desktopcontainment/contents/ui/FolderItemDelegate.qml"
+    [ -f "$delegate" ] && rg -q "linkEmblem" "$delegate" 2>/dev/null
+}
+
+# The folder-view work used to survive only as hand-built files copied into
+# ~/.local. They are not on Qt6's QML import path, so they silently do nothing
+# while looking installed -- which is how the regression went unnoticed. Flag
+# them so they get removed once the packaged build carries the patches.
+stale_folder_view_overrides() {
+    local o
+    for o in \
+        "$TARGET_HOME/.local/lib/qt6/qml/org/kde/private/desktopcontainment/folder/libfolderplugin.so" \
+        "$TARGET_HOME/.local/share/plasma/plasmoids/org.kde.desktopcontainment"; do
+        [ -e "$o" ] && printf '%s\n' "$o"
+    done
+    return 0
+}
+
 pacman_holds_are_present() {
     rg -q "IgnorePkg = .*libplasma.*plasma-desktop|IgnorePkg = .*plasma-desktop.*libplasma" /etc/pacman.conf 2>/dev/null
 }
@@ -223,6 +242,18 @@ print_audit_report() {
         echo "plasma-desktop: patched"
     else
         echo "plasma-desktop: missing jumplist grouping patch"
+    fi
+    if plasma_desktop_folder_view_is_patched; then
+        echo "plasma-desktop folder view: patched (link badge + folder colour on shortcuts)"
+    else
+        echo "plasma-desktop folder view: MISSING link-badge/folder-colour patches"
+        echo "  -> rebuild: sudo ./scripts/build-patched-plasma-packages.sh --apply"
+    fi
+    local stale_overrides
+    stale_overrides="$(stale_folder_view_overrides)"
+    if [ -n "$stale_overrides" ]; then
+        echo "stale hand-built folder-view overrides present (inert; remove them):"
+        printf '  %s\n' $stale_overrides
     fi
     if pacman_holds_are_present; then
         echo "pacman holds: active"

@@ -1,5 +1,14 @@
 #!/bin/bash
-# make-folder-shortcut.sh — Create a proper KDE folder shortcut (.desktop Type=Link)
+# make-folder-shortcut.sh — Create a KDE folder shortcut (.desktop Type=Link)
+#
+# Type=Link is used rather than a symlink because Dolphin opens a symlink at the
+# symlink's own path (~/Desktop/Name) instead of the target — see
+# KDE-Customization-TODO.md item #2. A Type=Link entry navigates to the real path.
+#
+# The link badge and folder-colour support for these files come from the
+# plasma-desktop patches in patches/ (folder-link-emblem, folder-color-links),
+# applied by scripts/build-patched-plasma-packages.sh.
+#
 # Usage: ./make-folder-shortcut.sh <folder-path> [shortcut-name]
 #
 # Examples:
@@ -7,56 +16,70 @@
 #   ./make-folder-shortcut.sh ~/Projects/MyProject "My Project"
 #   ./make-folder-shortcut.sh /mnt/data/Backups Backups
 
-set -e
+set -euo pipefail
 
 FOLDER_PATH="${1:-}"
 SHORTCUT_NAME="${2:-}"
 
 if [ -z "$FOLDER_PATH" ]; then
-    echo "Usage: $0 <folder-path> [shortcut-name]"
-    echo ""
-    echo "Examples:"
-    echo "  $0 ~/Projects/MyProject"
-    echo "  $0 ~/Projects/MyProject \"My Project\""
+    echo "Usage: $0 <folder-path> [shortcut-name]" >&2
+    echo "  Creates ~/Desktop/<name>.desktop pointing at <folder-path>." >&2
     exit 1
 fi
 
-# Resolve to absolute path
 FOLDER_PATH="$(realpath -m "$FOLDER_PATH")"
+[ -n "$SHORTCUT_NAME" ] || SHORTCUT_NAME="$(basename "$FOLDER_PATH")"
 
-# Derive name from folder if not provided
-if [ -z "$SHORTCUT_NAME" ]; then
-    SHORTCUT_NAME="$(basename "$FOLDER_PATH")"
-fi
+# Only '/' and NUL are actually illegal in a filename. The old version ran
+# `tr -cd '[:alnum:]_-'`, which turned "C VS C++" into "C_VS_C" and
+# "Proj.&Role Pitches" into "ProjRole_Pitches" — the file no longer matched
+# its own visible label. Keep the name; strip only what the filesystem rejects.
+FILENAME="$(printf '%s' "$SHORTCUT_NAME" | tr -d '\000' | tr '/' '-')"
+OUTPUT="$HOME/Desktop/$FILENAME.desktop"
 
-# Sanitize filename (remove/replace problematic chars)
-FILENAME="$(echo "$SHORTCUT_NAME" | tr ' ' '_' | tr -cd '[:alnum:]_-').desktop"
-OUTPUT="$HOME/Desktop/$FILENAME"
-
-# Check if folder exists
 if [ ! -d "$FOLDER_PATH" ]; then
-    echo "Warning: Folder does not exist yet: $FOLDER_PATH"
-    read -p "Create it? [y/N] " reply
-    if [[ "$reply" =~ ^[Yy]$ ]]; then
-        mkdir -p "$FOLDER_PATH"
-    else
-        echo "Cancelled."
-        exit 1
-    fi
+    echo "Warning: folder does not exist yet: $FOLDER_PATH" >&2
+    read -r -p "Create it? [y/N] " reply
+    case "$reply" in
+        [Yy]*) mkdir -p "$FOLDER_PATH" ;;
+        *) echo "Cancelled." >&2; exit 1 ;;
+    esac
 fi
 
-# Write the .desktop file
-cat > "$OUTPUT" << EOF
+if [ -e "$OUTPUT" ]; then
+    read -r -p "$OUTPUT already exists. Overwrite? [y/N] " reply
+    case "$reply" in
+        [Yy]*) ;;
+        *) echo "Cancelled." >&2; exit 1 ;;
+    esac
+fi
+
+# Prefer $HOME-relative so the entry survives a different home path. The [$e]
+# suffix is the KConfig flag that makes KDE expand shell variables in the value.
+#
+# NOTE the QUOTED heredoc below. With an unquoted one the shell expands "$e"
+# (undefined) to nothing and the file ends up with a useless `URL[]=` key —
+# that was the long-standing bug in this script, and desktop-shortcuts-guide.md
+# had the correct quoted form all along.
+if [ "${FOLDER_PATH#"$HOME"/}" != "$FOLDER_PATH" ]; then
+    URL_VALUE="file:\$HOME/${FOLDER_PATH#"$HOME"/}"
+else
+    URL_VALUE="file:$FOLDER_PATH"
+fi
+
+mkdir -p "$HOME/Desktop"
+{
+    cat <<'EOF'
 [Desktop Entry]
 Icon=folder
-Name=$SHORTCUT_NAME
 Type=Link
-URL[$e]=file:$FOLDER_PATH
 EOF
+    printf 'Name=%s\n' "$SHORTCUT_NAME"
+    printf 'URL[$e]=%s\n' "$URL_VALUE"
+} > "$OUTPUT"
 
+# KDE refuses to trust a user-owned .desktop launcher without the executable bit.
 chmod +x "$OUTPUT"
 
-echo "✅ Created: $OUTPUT"
-echo "   Points to: $FOLDER_PATH"
-echo ""
-echo "Double-click it on your desktop to open in Dolphin."
+echo "Created: $OUTPUT"
+echo "  -> $FOLDER_PATH"

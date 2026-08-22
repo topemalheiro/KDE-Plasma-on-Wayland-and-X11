@@ -20,9 +20,25 @@ declare -A PACKAGE_REPOS=(
     [plasma-desktop]="https://gitlab.archlinux.org/archlinux/packaging/packages/plasma-desktop.git"
 )
 
+# Whitespace-separated list of patch file names per package, applied in this
+# order. Every patch listed here is applied AND verified below -- a patch that
+# silently stops applying fails the build instead of shipping a package that
+# quietly drops a feature. (The folder-view patches were lost exactly that way
+# when a rebuild carried only the jumplist patch.)
 declare -A PACKAGE_PATCHES=(
-    [libplasma]="$REPO_ROOT/patches/plasma-framework-secondary-action.patch"
-    [plasma-desktop]="$REPO_ROOT/patches/plasma-desktop-jumplist-secondary-action.patch"
+    [libplasma]="plasma-framework-secondary-action.patch"
+    [plasma-desktop]="plasma-desktop-jumplist-secondary-action.patch
+                      plasma-desktop-folder-link-emblem.patch
+                      plasma-desktop-copy-location.patch"
+)
+
+# "<path relative to the unpacked source>:<string that must be present>", one
+# per line. Checked after makepkg --nobuild has prepared the source.
+declare -A PACKAGE_VERIFY=(
+    [libplasma]="src/declarativeimports/plasmaextracomponents/qmenuitem.h:secondaryAction"
+    [plasma-desktop]="applets/taskmanager/qml/ContextMenu.qml:groupJumpListActions
+                      containments/desktop/package/contents/ui/FolderItemDelegate.qml:linkEmblem
+                      containments/desktop/plugins/folder/foldermodel.cpp:copyLocation"
 )
 
 BUILT_PACKAGES=()
@@ -126,19 +142,27 @@ sync_packaging_repo() {
 patch_pkgbuild() {
     local package_name="$1"
     local package_dir="$2"
-    local patch_source="${PACKAGE_PATCHES[$package_name]}"
     local patch_name
+    local patch_source
+    local -a patch_names=()
 
-    patch_name="$(basename "$patch_source")"
-    run_makepkg_as_target_user cp "$patch_source" "$package_dir/$patch_name"
+    for patch_name in ${PACKAGE_PATCHES[$package_name]}; do
+        patch_source="$REPO_ROOT/patches/$patch_name"
+        [ -f "$patch_source" ] || die "Configured patch not found: $patch_source"
+        run_makepkg_as_target_user cp "$patch_source" "$package_dir/$patch_name"
+        patch_names+=("$patch_name")
+    done
 
-    run_makepkg_as_target_user python3 - "$package_dir/PKGBUILD" "$patch_name" <<'PY'
+    [ "${#patch_names[@]}" -gt 0 ] || die "No patches configured for $package_name."
+    log_info "Applying ${#patch_names[@]} patch(es) to $package_name: ${patch_names[*]}"
+
+    run_makepkg_as_target_user python3 - "$package_dir/PKGBUILD" "${patch_names[@]}" <<'PY'
 from pathlib import Path
 import re
 import sys
 
 pkgbuild_path = Path(sys.argv[1])
-patch_name = sys.argv[2]
+patch_names = sys.argv[2:]
 text = pkgbuild_path.read_text()
 
 text = re.sub(r"^pkgrel=1$", "pkgrel=1.1", text, count=1, flags=re.MULTILINE)
@@ -150,10 +174,10 @@ if not arrays:
 source_block = arrays.group(1)
 sha_block = arrays.group(2)
 
-if patch_name not in source_block:
-    source_block = source_block.rstrip() + f"\n        '{patch_name}'"
-if patch_name not in sha_block:
-    sha_block = sha_block.rstrip() + "\n            'SKIP'"
+for patch_name in patch_names:
+    if patch_name not in source_block:
+        source_block = source_block.rstrip() + f"\n        '{patch_name}'"
+        sha_block = sha_block.rstrip() + "\n            'SKIP'"
 
 text = (
     text[:arrays.start()]
@@ -163,19 +187,18 @@ text = (
 
 text = re.sub(r"(^|\n)prep\(\)\s*\{", r"\1prepare() {", text, count=1)
 
-patch_snippet = f'  cd "$pkgname-$pkgver"\n  patch -Np1 -i "$srcdir/{patch_name}"\n'
-patch_command = f'patch -Np1 -i "$srcdir/{patch_name}"'
+# One cd, then one patch line per configured patch, skipping any already present.
+missing = [n for n in patch_names if f'patch -Np1 -i "$srcdir/{n}"' not in text]
+if missing:
+    snippet = '  cd "$pkgname-$pkgver"\n' if 'cd "$pkgname-$pkgver"' not in text else ""
+    snippet += "".join(f'  patch -Np1 -i "$srcdir/{n}"\n' for n in missing)
 
-if patch_command not in text:
     prepare_match = re.search(r"(^|\n)prepare\(\)\s*\{\n", text)
     if prepare_match:
         insert_at = prepare_match.end()
-        text = text[:insert_at] + patch_snippet + text[insert_at:]
+        text = text[:insert_at] + snippet + text[insert_at:]
     else:
-        prepare_block = f"""prepare() {{
-{patch_snippet}}}
-
-"""
+        prepare_block = f"prepare() {{\n{snippet}}}\n\n"
         text = text.replace("\nbuild() {\n", f"\n{prepare_block}build() {{\n", 1)
 
 pkgbuild_path.write_text(text)
@@ -186,8 +209,7 @@ verify_patched_source() {
     local package_name="$1"
     local package_dir="$2"
     local source_dir="$package_dir/src/${package_name}-${PLASMA_TAG%-*}"
-    local verify_path
-    local verify_pattern
+    local entry rel verify_path verify_pattern
 
     log_info "Preparing patched source for $package_name ..."
     (
@@ -195,22 +217,24 @@ verify_patched_source() {
         run_makepkg_as_target_user makepkg --nobuild --nodeps --skippgpcheck --cleanbuild
     )
 
-    case "$package_name" in
-        libplasma)
-            verify_path="$source_dir/src/declarativeimports/plasmaextracomponents/qmenuitem.h"
-            verify_pattern="secondaryAction"
-            ;;
-        plasma-desktop)
-            verify_path="$source_dir/applets/taskmanager/qml/ContextMenu.qml"
-            verify_pattern="groupJumpListActions"
-            ;;
-        *)
-            die "No verification pattern configured for $package_name."
-            ;;
-    esac
+    [ -n "${PACKAGE_VERIFY[$package_name]:-}" ] \
+        || die "No verification markers configured for $package_name."
 
-    [ -f "$verify_path" ] || die "Prepared source file not found for $package_name: $verify_path"
-    rg -q "$verify_pattern" "$verify_path" || die "Patch verification failed for $package_name: '$verify_pattern' not found in $verify_path"
+    while IFS= read -r entry; do
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [ -n "$entry" ] || continue
+
+        rel="${entry%%:*}"
+        verify_pattern="${entry##*:}"
+        verify_path="$source_dir/$rel"
+
+        [ -f "$verify_path" ] \
+            || die "Prepared source file not found for $package_name: $verify_path"
+        grep -q -- "$verify_pattern" "$verify_path" \
+            || die "Patch verification failed for $package_name: '$verify_pattern' not found in $rel"
+        log_info "  verified $rel contains '$verify_pattern'"
+    done <<< "${PACKAGE_VERIFY[$package_name]}"
 }
 
 build_package() {
