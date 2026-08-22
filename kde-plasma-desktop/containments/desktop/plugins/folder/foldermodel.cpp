@@ -19,6 +19,7 @@
 #include <QClipboard>
 #include <QCollator>
 #include <QDir>
+#include <QFileDialog>
 #include <QDrag>
 #include <QImage>
 #include <QItemSelectionModel>
@@ -44,6 +45,8 @@
 #include <KConfigGroup>
 #include <KCoreDirLister>
 #include <KDesktopFile>
+#include <KDirNotify>
+#include <KFileUtils>
 #include <KDirModel>
 #include <KDirWatch>
 #include <KFileCopyToMenu>
@@ -355,6 +358,7 @@ QHash<int, QByteArray> FolderModel::staticRoleNames()
     roleNames[SizeRole] = QByteArrayLiteral("size");
     roleNames[TypeRole] = QByteArrayLiteral("type");
     roleNames[FileNameWrappedRole] = QByteArrayLiteral("displayWrapped");
+    roleNames[IsDesktopFileLinkRole] = QByteArrayLiteral("isDesktopFileLink");
 
     return roleNames;
 }
@@ -1515,6 +1519,17 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
             }
         }
         return item.isLink();
+    } else if (role == IsDesktopFileLinkRole) {
+        // Deliberately NOT IsLinkRole: true only for .desktop Type=Link, never
+        // a real symlink -- KIO already composites emblem-symbolic-link into a
+        // symlink's decoration, so keying the QML overlay off IsLinkRole drew a
+        // second badge on top.
+        const KFileItem item = itemForIndex(index);
+        if (m_parseDesktopFiles && item.isDesktopFile()) {
+            const KDesktopFile file(item.targetUrl().path());
+            return file.hasLinkType();
+        }
+        return false;
     } else if (role == IsHiddenRole) {
         const KFileItem item = itemForIndex(index);
         return item.isHidden();
@@ -1551,10 +1566,23 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
         if (m_parseDesktopFiles && item.isDesktopFile()) {
             const KDesktopFile file(item.targetUrl().path());
             if (file.hasLinkType()) {
+                // The entry's own Icon= wins, exactly as KIO's
+                // iconFromDesktopFile() does for every other .desktop file.
+                // Without this, choosing an icon in Properties silently does
+                // nothing. `folder` is the placeholder our generator writes, so
+                // treat it as "no preference" and derive from the target, which
+                // is what lets a coloured target's colour show through.
+                const QString ownIcon = file.readIcon();
+                if (!ownIcon.isEmpty() && ownIcon != QLatin1String("folder")) {
+                    return ownIcon;
+                }
+
                 const QUrl url(file.readUrl());
                 if (url.isValid()) {
-                    KFileItem targetItem(url);
-                    return targetItem.iconName();
+                    const QString targetIcon = KFileItem(url).iconName();
+                    if (!targetIcon.isEmpty()) {
+                        return targetIcon;
+                    }
                 }
             }
         }
@@ -1854,6 +1882,11 @@ void FolderModel::createActions()
     connect(copyLocation, &QAction::triggered, this, &FolderModel::copyLocation);
     m_actionCollection.addAction(QStringLiteral("copyLocation"), copyLocation);
 
+    QAction *createFolderShortcut =
+        new QAction(QIcon::fromTheme(QStringLiteral("emblem-symbolic-link")), i18nc("@action:incontextmenu", "Create Folder Shortcut…"), this);
+    connect(createFolderShortcut, &QAction::triggered, this, &FolderModel::createFolderShortcut);
+    m_actionCollection.addAction(QStringLiteral("createFolderShortcut"), createFolderShortcut);
+
     m_actionCollection.addAction(QStringLiteral("paste"), paste);
     m_actionCollection.addAction(QStringLiteral("pasteto"), pasteTo);
     m_actionCollection.addAction(QStringLiteral("refresh"), refresh);
@@ -2017,6 +2050,7 @@ void FolderModel::openContextMenu(QQuickItem *visualParent, Qt::KeyboardModifier
 
     if (indexes.isEmpty()) {
         menu->addAction(m_actionCollection.action(QStringLiteral("newMenu")));
+        menu->addAction(m_actionCollection.action(QStringLiteral("createFolderShortcut")));
         menu->addSeparator();
         menu->addAction(m_actionCollection.action(QStringLiteral("paste")));
         menu->addAction(m_actionCollection.action(QStringLiteral("undo")));
@@ -2257,6 +2291,64 @@ void FolderModel::copyLocation()
     }
 
     QApplication::clipboard()->setText(paths.join(QStringLiteral("\n")));
+}
+
+void FolderModel::createFolderShortcut()
+{
+    const QUrl dirUrl = resolvedUrl();
+    if (!dirUrl.isLocalFile()) {
+        return;
+    }
+
+    // Deliberately non-modal: getExistingDirectory() would spin a nested event
+    // loop inside plasmashell.
+    auto *dialog = new QFileDialog(nullptr, i18nc("@title:window", "Choose a Folder to Link To"), QDir::homePath());
+    dialog->setFileMode(QFileDialog::Directory);
+    dialog->setOption(QFileDialog::ShowDirsOnly, true);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    connect(dialog, &QFileDialog::fileSelected, this, [dirUrl](const QString &target) {
+        if (target.isEmpty()) {
+            return;
+        }
+
+        // dirName() gives the last component whether or not the picker handed
+        // us a trailing slash. KIO's own "Link to File or Directory" dialog
+        // gets this wrong: a trailing slash makes QUrl::fileName() empty and it
+        // falls back to naming the link after the entire URL.
+        const QString name = QDir(target).dirName();
+        if (name.isEmpty()) {
+            return;
+        }
+
+        const QDir destDir(dirUrl.toLocalFile());
+        QString fileName = name + QLatin1String(".desktop");
+        if (destDir.exists(fileName)) {
+            fileName = KFileUtils::suggestName(dirUrl, fileName);
+        }
+        const QString path = destDir.absoluteFilePath(fileName);
+
+        // Type=Link rather than a symlink: a symlink opens at its own path, so
+        // the location bar would show <view dir>/<name> instead of the target.
+        KDesktopFile desktopFile(path);
+        KConfigGroup group = desktopFile.desktopGroup();
+        group.writeEntry("Type", QStringLiteral("Link"));
+        group.writeEntry("Name", name);
+        // Placeholder: Qt::DecorationRole treats a plain "folder" as "no
+        // preference" and derives from the target, so its colour shows through.
+        // An icon chosen later in Properties overrides it.
+        group.writeEntry("Icon", QStringLiteral("folder"));
+        group.writeEntry("URL", QUrl::fromLocalFile(target).toString());
+        desktopFile.sync();
+
+        // KDE will not trust a user-owned launcher without the executable bit.
+        QFile::setPermissions(path,
+                              QFile::permissions(path) | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+
+        org::kde::KDirNotify::emitFilesAdded(dirUrl);
+    });
+
+    dialog->open();
 }
 
 void FolderModel::cut()

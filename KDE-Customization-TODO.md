@@ -707,7 +707,26 @@ Patched `kde-plasma-desktop` folder containment plugin (`libfolderplugin.so`) an
 **Deactivation:**
 Revert to symlink approach (loses correct path display in Dolphin) or remove the patch and rebuild affected components.
 
-**Status:** DONE — Both link badge and folder color support restored. Restart plasmashell to apply.
+**Status:** DONE (2026-08-22) — but it was silently broken for two months first.
+
+**Regression and real fix:** the patch was only ever hand-built into `~/.local/lib/qt6/qml/...`,
+which is not on Qt6's QML import path, so it looked installed while doing nothing. The
+`plasma-desktop 6.7.2-1.1` rebuild of 9 Jul then overwrote the packaged copy, because
+`scripts/build-patched-plasma-packages.sh` could hold only **one patch per package** and carried
+just the jumplist patch. `PACKAGE_PATCHES` now takes a list and `PACKAGE_VERIFY` checks a marker
+per patch, so a dropped patch fails the build instead of shipping a package quietly missing the
+feature. The stale `~/.local` overrides have been moved aside.
+
+**Three faults exposed once it actually ran** (all fixed 2026-08-22):
+- `Qt::DecorationRole` returned the link *target's* icon unconditionally, discarding the entry's
+  own `Icon=` — so choosing an icon in Properties appeared to do nothing. It now mirrors KIO's
+  `iconFromDesktopFile()`: the entry's own icon wins, and only the placeholder `folder` derives
+  from the target (which is what makes the target's colour show through).
+- Real symlinks got **two** badges: KIO composites `emblem-symbolic-link` into the decoration
+  itself, and the QML overlay keyed off `IsLinkRole` drew a second on top. A new
+  `IsDesktopFileLinkRole` drives the overlay so only `.desktop` links get it; `IsLinkRole` still
+  drives the italic label.
+- Folder colour was still unreachable from a shortcut's context menu — see item #17.
 
 ---
 
@@ -777,6 +796,10 @@ killall plasmashell && kstart6 plasmashell
 Remove patch and rebuild the affected Plasma component, or revert to original files.
 
 **Status:** DONE — Both context menu "Copy Location" and `Ctrl+Shift+C` shortcut now resolve target paths for `.desktop` Type=Link files.
+
+**Note:** lost in the same 9 Jul rebuild as item #12 and restored 2026-08-22.
+`plasma-desktop-copy-location.patch` is now registered in the build pipeline with a
+`PACKAGE_VERIFY` marker.
 
 ---
 
@@ -1067,3 +1090,62 @@ These preferences are stored in `~/.local/share/Hubstaff/settings.json` under `c
 ```
 
 **Status:** DONE — Hubstaff now uses its native tray-only settings. KWin rule remains as a safety net. Only one tray icon (native) appears when in tray-only mode.
+
+---
+
+### 17. Folder Colour Swatches, Symlink Paths, and Shortcut Naming ✅ FIXED
+
+**Status:** DONE (2026-08-22)
+
+**A — no colour picker on a shortcut.** A `Type=Link` shortcut's MIME type is
+`application/x-desktop`, and KIO filters `kfileitemaction` plugins by MIME type
+(`kfileitemactions.cpp:607`). Dolphin's folder-colour plugin declares `inode/directory` only, so
+its swatch row was never offered on a shortcut.
+
+`plasma-desktop-folder-color-links.patch`: when a whole selection resolves to writable local
+directories, offer *that one plugin* the resolved targets, so it writes `Icon=folder-<colour>`
+into the target's `.directory` — where the DecorationRole branch already reads the colour from.
+
+Adversarial review killed the first attempt. `KFileItemActions` resolves URLs from its properties
+**lazily, at trigger time**, so re-setting the shared instance retroactively retargeted the Open
+With entries already inserted for the shortcut: "Open With → Kate" would have handed Kate the
+target folder instead of the `.desktop` file. Fixed with a separate FolderModel-owned
+`KFileItemActions`, plus `MenuActionSource::Plugins` and an allowlist, so no servicemenu — present
+or installed later — can be redirected at the target folder.
+
+**B — symlinks open at the wrong path.** `FolderModel::run()` opened `item.targetUrl()`, the
+symlink's own path, so the location bar read `~/Desktop/<name>`.
+`plasma-desktop-symlink-target-navigation.patch` resolves symlinks-to-directories to their
+canonical target in `run()` and `cd()`. Symlinks already get the badge and colour menu natively,
+so this was the only piece they lacked.
+
+**C — new links are named after the URL.** Upstream KIO bug in
+`knameandurlinputdialog.cpp:118-121`: the default name comes from `url.fileName()`, which is empty
+when the path ends in `/`, so it falls back to `url.toString()`. Browsing to a *directory* always
+yields a trailing slash, hence names like `file:⁄⁄⁄home⁄tope⁄Projects⁄OS-Toolkit⁄plans⁄`
+(KDE substitutes U+2044 FRACTION SLASH for `/`).
+
+`plasma-desktop-create-folder-shortcut.patch` adds a **Create Folder Shortcut…** action to the
+desktop and Folder View context menus: writes a `Type=Link` `.desktop` named after the folder,
+de-duplicates the filename, sets the executable bit, and refreshes via `KDirNotify`. Note the
+desktop containment builds its empty-area menu from `Plasmoid.contextualActions` via
+`sharedActions` in `FolderViewLayer.qml`, **not** through `FolderModel::openContextMenu()`, so the
+action has to be registered in both places.
+
+KIO itself was deliberately **not** patched. The 2-line `StripTrailingSlash` fix is correct and
+worth filing upstream, but kio is a core Frameworks library that every KDE app links, and it
+releases monthly — holding it would be a monthly rebuild treadmill. A previous kio patch here
+(`~/build/kio/fix-symlink-to-desktop-link.patch`) was already silently wiped by an upgrade for
+exactly that reason. Workaround for the stock dialog: delete the trailing `/` in the URL field and
+the Name field fills in correctly.
+
+**Files:**
+- `patches/plasma-desktop-folder-color-links.patch`
+- `patches/plasma-desktop-symlink-target-navigation.patch`
+- `patches/plasma-desktop-create-folder-shortcut.patch`
+- `scripts/repair-desktop-shortcuts.sh` — audits and fixes existing shortcuts (missing URL scheme,
+  missing exec bit, URL-shaped symlink names)
+- `scripts/revert-desktop-to-symlinks.sh` — the reversal item #2 said did not exist
+
+**Deactivation:** remove the patches from `PACKAGE_PATCHES` (and their `PACKAGE_VERIFY` markers)
+in `scripts/build-patched-plasma-packages.sh`, then rebuild.

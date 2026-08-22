@@ -23,7 +23,7 @@ FocusScope {
     /*required*/ property bool isPopup
     /*required*/ property bool useListViewMode
 
-    property var sharedActions: ["newMenu", "paste", "undo", "emptyTrash"]
+    property var sharedActions: ["newMenu", "createFolderShortcut", "paste", "undo", "emptyTrash"]
     property Component folderViewDialogComponent: Qt.createComponent("FolderViewDialog.qml", Qt.Asynchronous, root)
 
     property FolderView view: folderView

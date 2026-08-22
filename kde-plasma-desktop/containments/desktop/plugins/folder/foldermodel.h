@@ -107,6 +107,7 @@ public:
         TypeRole,
         FileNameRole,
         FileNameWrappedRole,
+        IsDesktopFileLinkRole,
     };
 
     enum FilterMode {
@@ -249,6 +250,7 @@ public:
     Q_INVOKABLE void paste();
     Q_INVOKABLE void copy();
     Q_INVOKABLE void copyLocation();
+    Q_INVOKABLE void createFolderShortcut();
     Q_INVOKABLE void cut();
     Q_INVOKABLE void deleteSelected();
     Q_INVOKABLE void undo();

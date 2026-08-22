@@ -1,8 +1,24 @@
-diff --git a/containments/desktop/plugins/folder/foldermodel.cpp b/containments/desktop/plugins/folder/foldermodel.cpp
-index c293c9f53c..26ed8a2b3a 100644
+--- a/containments/desktop/plugins/folder/foldermodel.h
++++ b/containments/desktop/plugins/folder/foldermodel.h
+@@ -107,6 +107,7 @@
+         TypeRole,
+         FileNameRole,
+         FileNameWrappedRole,
++        IsDesktopFileLinkRole,
+     };
+ 
+     enum FilterMode {
 --- a/containments/desktop/plugins/folder/foldermodel.cpp
 +++ b/containments/desktop/plugins/folder/foldermodel.cpp
-@@ -1508,6 +1508,12 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
+@@ -355,6 +355,7 @@
+     roleNames[SizeRole] = QByteArrayLiteral("size");
+     roleNames[TypeRole] = QByteArrayLiteral("type");
+     roleNames[FileNameWrappedRole] = QByteArrayLiteral("displayWrapped");
++    roleNames[IsDesktopFileLinkRole] = QByteArrayLiteral("isDesktopFileLink");
+ 
+     return roleNames;
+ }
+@@ -1509,7 +1510,24 @@
          return isDir(mapToSource(index), m_dirModel);
      } else if (role == IsLinkRole) {
          const KFileItem item = itemForIndex(index);
@@ -13,9 +29,21 @@ index c293c9f53c..26ed8a2b3a 100644
 +            }
 +        }
          return item.isLink();
++    } else if (role == IsDesktopFileLinkRole) {
++        // Deliberately NOT IsLinkRole: true only for .desktop Type=Link
++        // entries, never for a real symlink. KIO already composites
++        // emblem-symbolic-link into a real symlink's decoration, so drawing the
++        // QML overlay on IsLinkRole put a second badge on top of the first.
++        const KFileItem item = itemForIndex(index);
++        if (m_parseDesktopFiles && item.isDesktopFile()) {
++            const KDesktopFile file(item.targetUrl().path());
++            return file.hasLinkType();
++        }
++        return false;
      } else if (role == IsHiddenRole) {
          const KFileItem item = itemForIndex(index);
-@@ -1540,6 +1546,20 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
+         return item.isHidden();
+@@ -1541,6 +1559,41 @@
          return KStringHandler::preProcessWrap(itemForIndex(index).text());
      }
  
@@ -24,11 +52,32 @@ index c293c9f53c..26ed8a2b3a 100644
 +        if (m_parseDesktopFiles && item.isDesktopFile()) {
 +            const KDesktopFile file(item.targetUrl().path());
 +            if (file.hasLinkType()) {
++                // The entry's own Icon= wins, exactly as KIO's
++                // iconFromDesktopFile() does for every other .desktop file.
++                // Without this, choosing an icon in the Properties dialog
++                // silently does nothing: the dialog writes Icon= and the model
++                // throws it away.
++                //
++                // `folder` is the placeholder our shortcut generator writes, so
++                // treat it as "no preference" and derive from the target. That
++                // is what makes a coloured target folder's colour show through
++                // on the shortcut, which is the point of this branch.
++                const QString ownIcon = file.readIcon();
++                if (!ownIcon.isEmpty() && ownIcon != QLatin1String("folder")) {
++                    return ownIcon;
++                }
++
 +                const QUrl url(file.readUrl());
 +                if (url.isValid()) {
-+                    KFileItem targetItem(url);
-+                    return targetItem.iconName();
++                    // Only stat the target once we know we need its icon --
++                    // this runs on every repaint of every shortcut.
++                    const QString targetIcon = KFileItem(url).iconName();
++                    if (!targetIcon.isEmpty()) {
++                        return targetIcon;
++                    }
 +                }
++                // Otherwise fall through to the stock decoration rather than
++                // returning an empty value.
 +            }
 +        }
 +    }
@@ -36,11 +85,17 @@ index c293c9f53c..26ed8a2b3a 100644
      return QSortFilterProxyModel::data(index, role);
  }
  
-diff --git a/containments/desktop/package/contents/ui/FolderItemDelegate.qml b/containments/desktop/package/contents/ui/FolderItemDelegate.qml
-index a137009955..cf062ce0aa 100644
 --- a/containments/desktop/package/contents/ui/FolderItemDelegate.qml
 +++ b/containments/desktop/package/contents/ui/FolderItemDelegate.qml
-@@ -313,6 +313,20 @@ Item {
+@@ -24,6 +24,7 @@
+     required property bool isDir
+     required property bool isHidden
+     required property bool isLink
++    required property bool isDesktopFileLink
+     required property bool selected
+     required property int index
+     required property string size
+@@ -313,6 +314,20 @@
                      source: main.decoration
                  }
  
@@ -53,7 +108,7 @@ index a137009955..cf062ce0aa 100644
 +                    anchors.bottom: icon.bottom
 +                    anchors.rightMargin: -Kirigami.Units.smallSpacing
 +                    anchors.bottomMargin: -Kirigami.Units.smallSpacing
-+                    visible: main.isLink
++                    visible: main.isDesktopFileLink
 +                    z: icon.z + 1
 +                    animated: false
 +                }

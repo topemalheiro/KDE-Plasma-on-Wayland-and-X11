@@ -24,6 +24,7 @@ Item {
     required property bool isDir
     required property bool isHidden
     required property bool isLink
+    required property bool isDesktopFileLink
     required property bool selected
     required property int index
     required property string size
@@ -322,7 +323,7 @@ Item {
                     anchors.bottom: icon.bottom
                     anchors.rightMargin: -Kirigami.Units.smallSpacing
                     anchors.bottomMargin: -Kirigami.Units.smallSpacing
-                    visible: main.isLink
+                    visible: main.isDesktopFileLink
                     z: icon.z + 1
                     animated: false
                 }

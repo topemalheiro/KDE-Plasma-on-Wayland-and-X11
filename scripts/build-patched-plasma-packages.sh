@@ -31,7 +31,8 @@ declare -A PACKAGE_PATCHES=(
                       plasma-desktop-folder-link-emblem.patch
                       plasma-desktop-copy-location.patch
                       plasma-desktop-folder-color-links.patch
-                      plasma-desktop-symlink-target-navigation.patch"
+                      plasma-desktop-symlink-target-navigation.patch
+                      plasma-desktop-create-folder-shortcut.patch"
 )
 
 # "<path relative to the unpacked source>:<string that must be present>", one
@@ -42,7 +43,10 @@ declare -A PACKAGE_VERIFY=(
                       containments/desktop/package/contents/ui/FolderItemDelegate.qml:linkEmblem
                       containments/desktop/plugins/folder/foldermodel.cpp:copyLocation
                       containments/desktop/plugins/folder/foldermodel.cpp:resolveLinkedDirectories
-                      containments/desktop/plugins/folder/foldermodel.cpp:resolveDirectorySymlink"
+                      containments/desktop/plugins/folder/foldermodel.cpp:resolveDirectorySymlink
+                      containments/desktop/plugins/folder/foldermodel.cpp:readIcon
+                      containments/desktop/package/contents/ui/FolderItemDelegate.qml:isDesktopFileLink
+                      containments/desktop/plugins/folder/foldermodel.cpp:createFolderShortcut"
 )
 
 BUILT_PACKAGES=()
