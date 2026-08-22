@@ -58,9 +58,27 @@ for l in "$DESKTOP"/*; do
     [ -L "$l" ] || continue
     target="$(readlink -f "$l" || true)"
     [ -d "$target" ] || continue
-    echo "$(basename "$l")"
+
+    base="$(basename "$l")"
+    echo "$base"
+
+    # KDE's "Create New -> Link to Location (URL)" names the symlink after the
+    # URL you typed, substituting U+2044 FRACTION SLASH for '/'. That yields
+    # names like "file:<U+2044><U+2044><U+2044>home<U+2044>tope<U+2044>...".
+    # Rename those to the target's basename.
+    if printf '%s' "$base" | grep -qE '^[a-zA-Z][a-zA-Z0-9+.-]*:|⁄'; then
+        want="$(basename "$target")"
+        if [ -n "$want" ] && [ ! -e "$DESKTOP/$want" ]; then
+            note "URL-shaped name -> renaming to \"$want\""
+            act mv -T -- "$l" "$DESKTOP/$want"
+            l="$DESKTOP/$want"
+        else
+            note "URL-shaped name, but \"$want\" already exists -- rename by hand"
+        fi
+    fi
+
     note "symlink to a directory -> opens at the symlink path, not \"$target\""
-    note "convert with: scripts/convert-symlinks-to-desktop.sh"
+    note "(fixed natively once the folder-view patches are installed)"
 done
 
 echo

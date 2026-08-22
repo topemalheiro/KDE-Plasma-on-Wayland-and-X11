@@ -1,13 +1,35 @@
+--- a/containments/desktop/plugins/folder/foldermodel.h
++++ b/containments/desktop/plugins/folder/foldermodel.h
+@@ -361,6 +361,11 @@
+     KActionCollection m_actionCollection;
+     KNewFileMenu *m_newMenu;
+     KFileItemActions *m_fileItemActions;
++    // Separate instance for actions offered against a link shortcut's target
++    // directory; see the comment in openContextMenu(). Must be a member, not a
++    // local: the QActions it creates outlive openContextMenu() and their slots
++    // dereference it when the user finally clicks.
++    KFileItemActions *m_linkTargetFileItemActions = nullptr;
+     KFileCopyToMenu *m_copyToMenu;
+     Status m_status = Status::None;
+     QString m_errorString;
 --- a/containments/desktop/plugins/folder/foldermodel.cpp
 +++ b/containments/desktop/plugins/folder/foldermodel.cpp
-@@ -1999,6 +1999,45 @@
+@@ -49,6 +49,7 @@
+ #include <KFileCopyToMenu>
+ #include <KFileItemActions>
+ #include <KFileItemListProperties>
++#include <KPluginMetaData>
+ #include <KIO/CopyJob>
+ #include <KIO/DeleteJob>
+ #include <KIO/DeleteOrTrashJob>
+@@ -1999,6 +2000,45 @@
      }
  }
  
-+// Resolves a selection of `Type=Link` .desktop files to the local directories they point at.
-+// Returns an empty list unless *every* item in the selection is such a link with a valid, local
-+// target URL, so that a mixed or partially-resolvable selection leaves the caller's behaviour
-+// untouched.
++// Resolves a selection of `Type=Link` .desktop files to the local directories
++// they point at. Returns an empty list unless *every* item is such a link with
++// a valid local target, so a mixed or partly-resolvable selection leaves the
++// caller's behaviour untouched.
 +static KFileItemList resolveLinkedDirectories(const KFileItemList &items)
 +{
 +    if (items.isEmpty()) {
@@ -46,28 +68,61 @@
  void FolderModel::openContextMenu(QQuickItem *visualParent, Qt::KeyboardModifiers modifiers)
  {
      Q_UNUSED(modifiers)
-@@ -2119,6 +2158,24 @@
-         menu->addSeparator();
- 
+@@ -2121,6 +2161,57 @@
          if (!isTrash && !isTrashLink) {
-+            // A desktop folder shortcut is a `Type=Link` .desktop file, so the selection's common
-+            // MIME type is application/x-desktop. KIO filters kfileitemaction plugins by that type,
-+            // which hides every plugin restricted to inode/directory - most visibly Dolphin's folder
-+            // colour swatch row, which writes Icon=folder-<colour> into the folder's .directory file.
-+            // When the whole selection resolves to existing, writable, local directories, offer those
-+            // targets to the plugins instead, so they act on the folder the shortcut points at.
-+            // This deliberately affects m_fileItemActions->addActionsTo() alone: `itemProperties` is
-+            // left untouched for the Copy To / Move To menu below, and every cut/copy/rename/trash/
-+            // delete action comes from m_actionCollection, whose enablement is computed from the
-+            // shortcut files in updateActions() and whose slots re-read m_selectionModel directly.
+             m_fileItemActions->addActionsTo(menu);
+ 
++            // A folder shortcut is a `Type=Link` .desktop file, so the selection's
++            // common MIME type is application/x-desktop. KIO filters kfileitemaction
++            // plugins by that type, hiding everything restricted to inode/directory --
++            // most visibly Dolphin's folder-colour swatch row, which writes
++            // Icon=folder-<colour> into the target folder's .directory file.
++            //
++            // Offer that one plugin the resolved target. Two restrictions are
++            // load-bearing:
++            //
++            //  * A SEPARATE KFileItemActions. KFileItemActions resolves URLs from its
++            //    properties lazily, at trigger time (slotRunApplication,
++            //    slotOpenWithDialog, slotExecuteService), so re-setting the shared
++            //    instance would retroactively retarget the Open With entries
++            //    insertOpenWithActionsTo() already added for the shortcut -- "Open
++            //    With > Kate" would hand Kate the folder instead of the .desktop file.
++            //    Both property sets have to stay alive until the menu is dismissed.
++            //
++            //  * MenuActionSource::Plugins plus an allowlist. Otherwise every
++            //    servicemenu and every other plugin gets redirected too, so any
++            //    inode/directory servicemenu installed later (Compress, a shred/wipe
++            //    entry, an rsync backup) would silently act on the target folder.
 +            const KFileItemList linkTargets = m_parseDesktopFiles ? resolveLinkedDirectories(items) : KFileItemList();
 +            if (!linkTargets.isEmpty()) {
 +                const KFileItemListProperties linkTargetProperties(linkTargets);
-+                if (linkTargetProperties.isLocal() && linkTargetProperties.isDirectory() && linkTargetProperties.supportsWriting()) {
-+                    m_fileItemActions->setItemListProperties(linkTargetProperties);
++                if (linkTargetProperties.isDirectory() && linkTargetProperties.supportsWriting()) {
++                    static const QString folderIconPlugin = QStringLiteral("setfoldericonitemaction");
++                    QStringList excluded;
++                    bool available = false;
++
++                    const QList<KPluginMetaData> plugins = KPluginMetaData::findPlugins(QStringLiteral("kf6/kfileitemaction"));
++                    for (const KPluginMetaData &plugin : plugins) {
++                        if (plugin.pluginId() == folderIconPlugin) {
++                            available = true;
++                        } else {
++                            excluded.append(plugin.pluginId());
++                        }
++                    }
++
++                    // If the plugin is ever renamed upstream, do nothing rather than
++                    // fall through with an empty excludeList, which would admit every
++                    // plugin -- exactly the blanket redirect this avoids.
++                    if (available) {
++                        if (!m_linkTargetFileItemActions) {
++                            m_linkTargetFileItemActions = new KFileItemActions(this);
++                        }
++                        m_linkTargetFileItemActions->setItemListProperties(linkTargetProperties);
++                        m_linkTargetFileItemActions->addActionsTo(menu, KFileItemActions::MenuActionSource::Plugins, {}, excluded);
++                    }
 +                }
 +            }
 +
-             m_fileItemActions->addActionsTo(menu);
- 
              // Copy To, Move To
+             KSharedConfig::Ptr dolphin = KSharedConfig::openConfig(QStringLiteral("dolphinrc"));
+             if (KConfigGroup(dolphin, QStringLiteral("General")).readEntry("ShowCopyMoveMenu", false)) {

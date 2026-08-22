@@ -1,0 +1,60 @@
+--- a/containments/desktop/plugins/folder/foldermodel.cpp
++++ b/containments/desktop/plugins/folder/foldermodel.cpp
+@@ -19,6 +19,7 @@
+ #include <QClipboard>
+ #include <QCollator>
+ #include <QDir>
++#include <QFileInfo>
+ #include <QDrag>
+ #include <QImage>
+ #include <QItemSelectionModel>
+@@ -836,6 +837,31 @@
+     }
+ }
+ 
++// A symlink to a directory otherwise opens at the symlink's own path
++// (~/Desktop/Name) instead of where it points, so the location bar, the
++// breadcrumb and "up" all refer to the Desktop rather than the real folder.
++// Resolve it, matching what Type=Link .desktop shortcuts already get from the
++// KDesktopFile::readUrl() branches below. Non-symlinks, broken symlinks and
++// symlinks to plain files are returned untouched.
++static QUrl resolveDirectorySymlink(const KFileItem &item, const QUrl &url)
++{
++    if (!item.isLink() || !url.isLocalFile()) {
++        return url;
++    }
++
++    const QFileInfo info(url.toLocalFile());
++    if (!info.isDir()) {
++        return url;
++    }
++
++    const QString resolved = info.canonicalFilePath();
++    if (resolved.isEmpty()) {
++        return url;
++    }
++
++    return QUrl::fromLocalFile(resolved);
++}
++
+ void FolderModel::cd(int row)
+ {
+     if (row < 0) {
+@@ -853,7 +879,7 @@
+                 setUrl(file.readUrl());
+             }
+         } else {
+-            setUrl(item.targetUrl().toString());
++            setUrl(resolveDirectorySymlink(item, item.targetUrl()).toString());
+         }
+     }
+ }
+@@ -866,7 +892,7 @@
+ 
+     KFileItem item = itemForIndex(index(row, 0));
+ 
+-    QUrl url(item.targetUrl());
++    QUrl url(resolveDirectorySymlink(item, item.targetUrl()));
+ 
+     // FIXME TODO: This can go once we depend on a KIO w/ fe1f50caaf2.
+     if (url.scheme().isEmpty()) {
