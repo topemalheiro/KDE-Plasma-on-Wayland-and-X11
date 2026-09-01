@@ -300,6 +300,35 @@ name (connector names renumber; this box has `DP-1`, `DP-3`, `HDMI-A-1`,
 It never writes `kcminputrc` — KWin does that itself inside `setOutputName()`,
 and the last-writer-wins churn in the shared group is expected and harmless.
 
+#### Update 2026-09-01: match on `usb_revision`, not `usb_path`
+
+The original `mapping.json` keyed both panels on `usb_path` (`13.3` = left,
+`12.1` = right). **USB port assignment on this box is not stable across boots.**
+Journal evidence from two consecutive boots on 2026-09-01:
+
+```
+17:59  fix-touchscreen: Mapped event11 (pci-0000:00:14.0-usb-0:12.1:1.0) -> DP-1
+18:04  daemon:          event11 ... pci-0000:00:14.0-usb-0:13.1:1.0        -> DP-1
+```
+
+Same panel (`event11`, bottom-right), two different ports. The monitors' built-in
+hubs re-enumerate in whatever order they wake, so the port number is a property
+of that boot, not of the panel.
+
+This matters because `usb_path` is **rank 0** in `match_panel()`
+(`touchscreen-mapping-daemon.py:203`) and therefore *beats* the `usb_revision`
+fallback at rank 3. A pinned port that the *other* panel later lands on would
+match at rank 0 and confidently drive the wrong screen — strictly worse than not
+matching at all. Both stale paths were also simply dead: the daemon had silently
+been running on the `usb_revision` fallback for both panels
+(`matched-by=usb_revision` in the journal).
+
+`usb_path` and `usb_port` are now empty for both panels. Matching runs on
+`ID_USB_REVISION` (bcdDevice), a firmware property rather than a topology one:
+`0600` (bottom-left) and `0200` (bottom-right), unique across the pair, which is
+the uniqueness condition the loader enforces at `:123`. Re-add `usb_path` only if
+the panels ever move onto a hub that keeps its numbering across a power cycle.
+
 ### Files Created/Modified
 | Path | Purpose |
 |------|---------|
@@ -314,6 +343,15 @@ Replaced: `~/.config/autostart/fix-touchscreen-mapping.desktop` (moved to
 `~/.config/autostart-disabled/`). The old `~/.local/bin/fix-touchscreen-mapping.sh`
 is still tracked in `bin.git` and can be `git rm`'d there.
 
+> **2026-09-01:** the retired autostart entry had **reappeared** in
+> `~/.config/autostart/` (byte-identical to the disabled copy, mtime 29 min after
+> the installer retired it — most likely re-enabled by hand in System Settings →
+> Autostart). It was running the old script at every login and racing the daemon
+> with its hardcoded `12.1`/`13.3` ports: at the 17:59 boot it mapped a panel,
+> at the 18:04 boot it logged `Unmatched` for both. Removed again; the copy in
+> `~/.config/autostart-disabled/` is the backup. If it comes back, check
+> System Settings → Autostart rather than re-running the installer.
+
 ### How to Verify
 ```bash
 systemctl --user status touchscreen-mapping
@@ -322,14 +360,19 @@ scripts/touchscreen-mapping-daemon.py --status      # exits 1 if any panel is wr
 # Simulate a monitor standby without waiting 10 minutes.
 # NB: `udevadm trigger` does NOT work -- it replays events for an existing
 # device and never makes KWin emit deviceAdded.
-echo 0 | sudo tee /sys/bus/usb/devices/1-13.3/authorized
+#
+# Do NOT hardcode the port here -- it changes between boots (see the
+# 2026-09-01 update above). Resolve it from the panel you want to bounce:
+PORT=$(udevadm info -q property -n /dev/input/event11 |
+       sed -n 's/^ID_PATH=.*-usb-0:\([0-9.]*\):.*/\1/p')
+echo 0 | sudo tee /sys/bus/usb/devices/1-$PORT/authorized
 sleep 2
-echo 1 | sudo tee /sys/bus/usb/devices/1-13.3/authorized
+echo 1 | sudo tee /sys/bus/usb/devices/1-$PORT/authorized
 journalctl --user -u touchscreen-mapping -n 5
 ```
 Confirmed working: with the daemon stopped, one bounce leaves *both* panels on
 `DP-1`; with it running, the journal shows
-`mapped event11 [bottom-left Verbatim] matched-by=usb_path output-by=edid: DP-1 -> HDMI-A-1`.
+`mapped event11 [bottom-left Verbatim] matched-by=usb_revision output-by=edid: DP-1 -> HDMI-A-1`.
 
 ### Gotcha
 Opening **System Settings → Touch Screen** rewrites the shared group and

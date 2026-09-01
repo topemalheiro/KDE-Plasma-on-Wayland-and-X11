@@ -12,6 +12,17 @@
     "                  fallback, used only when unique across panels, so a",
     "                  panel keeps working if replugged into a different port.",
     "",
+    "ON THIS BOX usb_path/usb_port are deliberately EMPTY, and matching runs on",
+    "usb_revision alone. The panels do not keep a stable USB port across boots:",
+    "the bottom-right panel came up on 12.1 at one boot and 13.1 at the next,",
+    "because the monitors' built-in hubs re-enumerate in whatever order they",
+    "wake. Since usb_path is rank 0 it BEATS usb_revision, so a pinned port that",
+    "the other panel later lands on would confidently map the wrong screen --",
+    "worse than not matching at all. bcdDevice is a firmware property, not a",
+    "topology one: 0600 (left) and 0200 (right) are stable and unique here.",
+    "Only re-add usb_path if the panels are ever moved onto a hub that keeps",
+    "its port numbering across a power cycle.",
+    "",
     "Choosing its OUTPUT:",
     "  edid_hash     - md5 of the monitor's raw EDID. Preferred: connector",
     "                  names renumber (this box has DP-1, DP-3, HDMI-A-1,",
@@ -31,17 +42,17 @@
   "panels": [
     {
       "label": "bottom-left Verbatim",
-      "usb_path": "pci-0000:00:14.0-usb-0:13.3:1.0",
-      "usb_port": "13.3",
-      "usb_revision": "0600",
+      "usb_path": "",
+      "usb_port": "",
+      "usb_revision": "0200",
       "output": "HDMI-A-1",
       "edid_hash": "14488ae572dd3395866fd2b57af68a92"
     },
     {
       "label": "bottom-right Verbatim",
-      "usb_path": "pci-0000:00:14.0-usb-0:12.1:1.0",
-      "usb_port": "12.1",
-      "usb_revision": "0200",
+      "usb_path": "",
+      "usb_port": "",
+      "usb_revision": "0600",
       "output": "DP-1",
       "edid_hash": "6bd15edc149ed55ad501383b2c94f4a2"
     }
