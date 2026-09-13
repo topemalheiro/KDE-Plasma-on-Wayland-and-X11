@@ -1,0 +1,11 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [ { "Email": "", "Name": "Custom" } ],
+        "Id": "insightful-tray-only",
+        "License": "MIT",
+        "Name": "Insightful Tray Only",
+        "Description": "While minimized, hides the Insightful (Workpuls) agent from the taskbar and pager so only its system tray icon remains. Restore with right-click -> Show Insightful, or Alt+Tab.",
+        "Version": "2.0"
+    }
+}
