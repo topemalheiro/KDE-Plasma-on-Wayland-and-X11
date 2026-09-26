@@ -29,8 +29,25 @@ IMPLEMENTATION NOTES
   printing a traceback. Every slot below is therefore wrapped.
 * The agent's bus name and menu item ids both change when it restarts, so they
   are re-resolved on every use and never cached.
+* Qt registers the icon with the tray once, on show(), and never retries. At
+  login this proxy can start before Plasma's tray (StatusNotifierWatcher) is up
+  -- Plasma 6 launches autostart entries through systemd and ignores
+  X-KDE-autostart-after=panel -- and the icon then silently never appears. So a
+  timer keeps checking that our icon is actually registered, and re-shows it if
+  it is not (tray started late, or plasmashell restarted).
+* The icon mirrors the agent: it is shown only while the agent's own tray item
+  exists, and hidden when the agent quits. A visible icon therefore always means
+  Insightful is running. (In "personal" mode the agent's red close button quits
+  the whole app -- its HeaderComponent.close() calls Broker "exit" -- and an icon
+  that lingered after that looked like "close sends it to the tray".)
+* There is no "Quit tray icon" entry: once the agent quit, it was the only
+  clickable entry left and was easy to hit by accident. The proxy has nothing to
+  show when the agent is gone, so it simply hides.
+* The menu is rebuilt right before it opens (aboutToShow), so its entries never
+  point at an agent instance that has already quit.
 """
 
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -136,16 +153,52 @@ class ProxyTray:
         self.tray.setToolTip("Insightful")
         self.menu = QMenu()
         self.tray.setContextMenu(self.menu)
+        self.menu.aboutToShow.connect(self.rebuild_menu)
         self.tray.activated.connect(self.on_activated)
 
         self.rebuild_menu()
-        self.tray.show()
+        self.sync()
+
+        # Show/hide with the agent, and re-register if the tray was not up yet
+        # or restarts later.
+        self.sync_timer = QTimer()
+        self.sync_timer.timeout.connect(self.sync)
+        self.sync_timer.start(3000)
 
         # The agent's menu is dynamic ("Start break (Time left: ...)") and its
         # bus name changes across agent restarts, so refresh periodically.
         self.timer = QTimer()
         self.timer.timeout.connect(self.rebuild_menu)
         self.timer.start(15000)
+
+    def icon_registered(self):
+        watcher = self.bus.get_object(WATCHER_NAME, WATCHER_PATH)
+        props = dbus.Interface(watcher, "org.freedesktop.DBus.Properties")
+        items = props.Get(WATCHER_NAME, "RegisteredStatusNotifierItems")
+        bus_iface = dbus.Interface(
+            self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus"),
+            "org.freedesktop.DBus")
+        for item in items:
+            name = str(item).split("/", 1)[0]
+            try:
+                if int(bus_iface.GetConnectionUnixProcessID(name)) == os.getpid():
+                    return True
+            except dbus.DBusException:
+                continue
+        return False
+
+    @guard
+    def sync(self):
+        agent_running = find_agent_item(self.bus)[0] is not None
+        if not agent_running:
+            if self.tray.isVisible():
+                self.tray.hide()
+            return
+        if not self.bus.name_has_owner(WATCHER_NAME):
+            return  # tray not up yet; check again on the next tick
+        if not self.tray.isVisible() or not self.icon_registered():
+            self.tray.hide()
+            self.tray.show()
 
     def agent_menu(self):
         name, path = find_agent_item(self.bus)
@@ -172,10 +225,6 @@ class ProxyTray:
                 action.triggered.connect(self.make_handler(name, mpath, item_id))
                 self.menu.addAction(action)
 
-        self.menu.addSeparator()
-        quit_action = QAction("Quit tray icon", self.menu)
-        quit_action.triggered.connect(self.app.quit)
-        self.menu.addAction(quit_action)
 
     def make_handler(self, name, mpath, item_id):
         @guard

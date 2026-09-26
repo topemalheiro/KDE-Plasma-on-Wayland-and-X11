@@ -55,11 +55,24 @@ method is simply absent from the closed-source binary.
 `insightful-tray-proxy.py` works around it: a second tray icon that *does*
 implement `Activate` (Qt provides it), forwarding every action to the agent's own
 DBusMenu. Left-click triggers the agent's own "Show Insightful" entry; the
-context menu mirrors whatever the agent currently offers, re-read every 15s so
-the live "Start break (Time left: …)" label stays accurate. The agent's own icon
-goes into `hiddenItems`, so only one icon is visible.
+context menu mirrors whatever the agent currently offers, rebuilt right before
+it opens (and every 15s) so the live "Start break (Time left: …)" label stays
+accurate and no entry ever points at an agent that has already quit. The agent's
+own icon goes into `hiddenItems`, so only one icon is visible.
 
 Nothing is reimplemented — the proxy only presses the agent's own buttons.
+
+The proxy **mirrors the agent's lifetime**: its icon is shown only while the
+agent's own tray item exists and hides when the agent quits, so a visible icon
+always means Insightful is running. There is deliberately no "Quit tray icon"
+entry — once the agent had quit it was the only clickable entry left and got hit
+by accident. `insightful-start.sh` also starts the proxy, so launching Insightful
+from the menu brings the icon back even if the proxy had exited.
+
+A 3-second timer also checks the icon is actually registered with the tray and
+re-shows it if not. Qt registers once, on `show()`, and never retries; at login
+the proxy can start before Plasma's `StatusNotifierWatcher` exists, and the icon
+then silently never appears (see Gotchas).
 
 ### 4. Minimizing leaves a dead entry in the taskbar
 
@@ -67,12 +80,37 @@ Nothing is reimplemented — the proxy only presses the agent's own buttons.
 `skipTaskbar`/`skipPager` to match. Minimize → gone from the taskbar, tray icon
 remains. Restore → back in the taskbar.
 
+Its `metadata.json` **must** contain `"X-Plasma-API": "javascript"`. Without it,
+KWin never loads the script at login even though `kwinrc` says it is enabled —
+see Gotchas.
+
 ## Gotchas
 
 **Closing the window quits the app.** It uses client-side decorations, so there
 is no `WM_DELETE_WINDOW` for the window manager to intercept — kdocker and
 KWin scripts alike are powerless here. **Minimize, never close.** kdocker was
 tried for this and does not work; it only adds a second, dead icon.
+
+The mechanism, from the app bundle: the red button is `HeaderComponent.close()`,
+which only closes the window in `office` mode; in `personal` mode (remote
+contractors) it calls the `exit` broker procedure and the whole app quits. That
+is the only caller of `exit`. It shows in
+`~/.config/workpuls-agent/logs/main/<date>.log` as
+`Remote procedure: exit` → `Before-quit` → `App quit.` — so a launch that
+"crashes" seconds after starting, with Sequelize `ConnectionManager … was closed`
+errors in the journal, was actually closed with the red button.
+
+**A KWin script without `"X-Plasma-API": "javascript"` never autoloads.**
+KWin's startup loader skips any script whose `metadata.json` lacks it, even with
+`<id>Enabled=true` in `kwinrc`. Every system script carries it. A script loaded
+by hand (`org.kde.kwin.Scripting.loadScript` over D-Bus) works anyway, but only
+until logout — which is how this script appeared to work and then "broke on
+restart". Check with
+`qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.isScriptLoaded insightful-tray-only`.
+
+**Plasma 6 ignores `X-KDE-autostart-after=panel`.** Autostart entries run as
+systemd units (`app-…@autostart.service`) with no ordering against the panel, so
+the proxy can start before the tray exists. Hence the proxy's re-register timer.
 
 **Never set `skipSwitcher`.** With the window hidden from the taskbar, Alt+Tab is
 the only fallback if the tray icon fails. Setting it leaves the window
@@ -99,7 +137,9 @@ Matching on the caption "Insightful" also matches a browser tab titled
 3. Right-click lists Show Insightful / Start break / Open dashboard.
 4. Minimize → gone from taskbar, icon remains; Alt+Tab still reaches it.
 5. `pgrep kdocker` returns nothing.
-6. Reboot and confirm all of the above.
+6. `isScriptLoaded insightful-tray-only` returns `true` right after login.
+7. Quit Insightful (red button) → the tray icon disappears; relaunch → it returns.
+8. Reboot and confirm all of the above.
 
 ## Wayland vs X11
 
