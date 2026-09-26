@@ -69,7 +69,7 @@ entry — once the agent had quit it was the only clickable entry left and got h
 by accident. `insightful-start.sh` also starts the proxy, so launching Insightful
 from the menu brings the icon back even if the proxy had exited.
 
-A 3-second timer also checks the icon is actually registered with the tray and
+A 1-second timer also checks the icon is actually registered with the tray and
 re-shows it if not. Qt registers once, on `show()`, and never retries; at login
 the proxy can start before Plasma's `StatusNotifierWatcher` exists, and the icon
 then silently never appears (see Gotchas).

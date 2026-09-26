@@ -33,7 +33,7 @@ IMPLEMENTATION NOTES
   login this proxy can start before Plasma's tray (StatusNotifierWatcher) is up
   -- Plasma 6 launches autostart entries through systemd and ignores
   X-KDE-autostart-after=panel -- and the icon then silently never appears. So a
-  timer keeps checking that our icon is actually registered, and re-shows it if
+  1-second timer keeps checking that our icon is actually registered, and re-shows it if
   it is not (tray started late, or plasmashell restarted).
 * The icon mirrors the agent: it is shown only while the agent's own tray item
   exists, and hidden when the agent quits. A visible icon therefore always means
@@ -163,7 +163,7 @@ class ProxyTray:
         # or restarts later.
         self.sync_timer = QTimer()
         self.sync_timer.timeout.connect(self.sync)
-        self.sync_timer.start(3000)
+        self.sync_timer.start(1000)
 
         # The agent's menu is dynamic ("Start break (Time left: ...)") and its
         # bus name changes across agent restarts, so refresh periodically.
@@ -193,12 +193,14 @@ class ProxyTray:
         if not agent_running:
             if self.tray.isVisible():
                 self.tray.hide()
+                print("agent gone: icon hidden", file=sys.stderr, flush=True)
             return
         if not self.bus.name_has_owner(WATCHER_NAME):
             return  # tray not up yet; check again on the next tick
         if not self.tray.isVisible() or not self.icon_registered():
             self.tray.hide()
             self.tray.show()
+            print("agent present: icon shown", file=sys.stderr, flush=True)
 
     def agent_menu(self):
         name, path = find_agent_item(self.bus)
