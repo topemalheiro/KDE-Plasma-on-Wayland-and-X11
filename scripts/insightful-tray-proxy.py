@@ -257,7 +257,12 @@ def main():
     app.setApplicationName("Insightful")
     app.setDesktopFileName("insightful")
     app.setQuitOnLastWindowClosed(False)
-    ProxyTray(app)
+    # Qt 6 quits when the last "quit lock" is released, and a visible tray icon
+    # holds one: hiding the icon when the agent quits would exit the proxy.
+    app.setQuitLockEnabled(False)
+    # Keep a reference: an unreferenced ProxyTray is garbage-collected at once,
+    # taking its timers with it, and the agent is then never re-checked.
+    tray = ProxyTray(app)  # noqa: F841
     sys.exit(app.exec())
 
 
