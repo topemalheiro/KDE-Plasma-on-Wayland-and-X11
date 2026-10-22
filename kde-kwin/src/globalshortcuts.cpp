@@ -136,7 +136,7 @@ void GlobalShortcutsManager::reRegisterKWinShortcuts()
         if (actionId.size() != 4) {
             continue;
         }
-        const QList<QKeySequence> keys = m_kglobalAccel->shortcutKeys(actionId);
+        const QSet<QKeySequence> keys = m_kglobalAccel->shortcutKeys(actionId);
         m_kglobalAccel->setShortcutKeys(actionId, keys, KGlobalAccelD::SetPresent);
     }
     m_kglobalAccel->blockGlobalShortcuts(false);
