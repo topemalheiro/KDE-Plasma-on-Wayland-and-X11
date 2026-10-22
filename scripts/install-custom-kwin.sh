@@ -11,6 +11,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 DRY_RUN=false
 if [ "${1:-}" = "--dry-run" ]; then
     DRY_RUN=true
@@ -18,7 +21,7 @@ fi
 
 # Auto-detect the KDE-Plasma-on-Wayland checkout.
 if [ -z "${KDE_ROOT:-}" ]; then
-    for candidate in "$HOME/Projects/KDE-Plasma-on-Wayland" "/home/tope/Projects/KDE-Plasma-on-Wayland"; do
+    for candidate in "$SCRIPT_ROOT" "$HOME/Projects/KDE-Plasma-on-Wayland" "/home/tope/Projects/KDE-Plasma-on-Wayland"; do
         if [ -f "$candidate/kde-kwin/CMakeLists.txt" ]; then
             KDE_ROOT="$candidate"
             break
@@ -40,6 +43,8 @@ BUILD_DEPS=(
     make
     pkgconf
     wayland-protocols
+    plasma-wayland-protocols
+    vulkan-headers
     qt6-tools
     qt6-declarative
     kdoctools
@@ -83,18 +88,20 @@ build_and_install() {
     fi
 
     mkdir -p "$KWIN_BUILD"
-    cd "$KWIN_BUILD"
 
-    cmake .. \
-        -DCMAKE_INSTALL_PREFIX=/usr \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_TESTING=OFF
+    # Configure if this is a fresh or previously failed build directory.
+    if [ ! -f "$KWIN_BUILD/CMakeCache.txt" ] || { [ ! -f "$KWIN_BUILD/build.ninja" ] && [ ! -f "$KWIN_BUILD/Makefile" ]; }; then
+        cmake -S "$KWIN_SRC" -B "$KWIN_BUILD" -G Ninja \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF
+    fi
 
     # Build using all cores
-    cmake --build . --parallel "$(nproc)"
+    cmake --build "$KWIN_BUILD" --parallel "$(nproc)"
 
     # Install
-    cmake --install .
+    cmake --install "$KWIN_BUILD"
     mkdir -p "$STATE_DIR"
     cat > "$KWIN_STAMP" <<EOF
 {

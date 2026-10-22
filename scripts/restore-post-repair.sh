@@ -13,6 +13,20 @@ TARGET_UID="$(id -u "$TARGET_USER")"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 TARGET_RUNTIME_DIR="/run/user/$TARGET_UID"
 TARGET_DBUS_ADDRESS="unix:path=$TARGET_RUNTIME_DIR/bus"
+LIBPLASMA_PLUGIN="/usr/lib/qt6/qml/org/kde/plasma/extras/libplasmaextracomponentsplugin.so"
+TASKMANAGER_PLUGIN="/usr/lib/qt6/plugins/plasma/applets/org.kde.plasma.taskmanager.so"
+VSCODE_DESKTOP_FILE="$TARGET_HOME/.local/share/applications/code.desktop"
+VSCODE_WATCH_PATH_UNIT="vscode-jumplist-sync.path"
+VSCODE_WATCH_SERVICE_UNIT="vscode-jumplist-sync.service"
+VOXTYPE_CORE_MODEL="$TARGET_HOME/.local/share/voxtype/models/ggml-base.en.bin"
+VOXTYPE_TURBO_MODEL="$TARGET_HOME/.local/share/voxtype/models/ggml-large-v3-turbo.bin"
+VOXTYPE_WAKE_MODEL="$TARGET_HOME/.local/share/voxtype-ptt-tray/models/vosk-model-small-en-us-0.15"
+VOXTYPE_SHORTCUT_DESKTOP="$TARGET_HOME/.local/share/applications/voxtype-toggle.desktop"
+WHATSIE_CONFIG="$TARGET_HOME/.var/app/com.ktechpit.whatsie/config/org.keshavnrj.ubuntu/WhatSie.conf"
+WHATSIE_AUTOSTART="$TARGET_HOME/.config/autostart/com.ktechpit.whatsie.desktop"
+WHATSIE_SERVICE="whatsie-tray.service"
+PLASMA_GUARD_HOOK="/etc/pacman.d/hooks/95-kde-patched-plasma-guard.hook"
+PLASMA_GUARD_EXEC="/usr/local/lib/kde-post-repair/plasma-package-guard"
 
 log_info() { echo "[INFO] $1"; }
 log_warn() { echo "[WARN] $1"; }
@@ -65,13 +79,23 @@ require_sudo_access() {
 }
 
 run_as_target_user() {
-    sudo -H -u "$TARGET_USER" env \
-        HOME="$TARGET_HOME" \
-        USER="$TARGET_USER" \
-        LOGNAME="$TARGET_USER" \
-        XDG_RUNTIME_DIR="$TARGET_RUNTIME_DIR" \
-        DBUS_SESSION_BUS_ADDRESS="$TARGET_DBUS_ADDRESS" \
-        "$@"
+    if [ "$(id -u)" -eq "$TARGET_UID" ]; then
+        env \
+            HOME="$TARGET_HOME" \
+            USER="$TARGET_USER" \
+            LOGNAME="$TARGET_USER" \
+            XDG_RUNTIME_DIR="$TARGET_RUNTIME_DIR" \
+            DBUS_SESSION_BUS_ADDRESS="$TARGET_DBUS_ADDRESS" \
+            "$@"
+    else
+        sudo -H -u "$TARGET_USER" env \
+            HOME="$TARGET_HOME" \
+            USER="$TARGET_USER" \
+            LOGNAME="$TARGET_USER" \
+            XDG_RUNTIME_DIR="$TARGET_RUNTIME_DIR" \
+            DBUS_SESSION_BUS_ADDRESS="$TARGET_DBUS_ADDRESS" \
+            "$@"
+    fi
 }
 
 collect_missing_packages() {
@@ -83,10 +107,24 @@ collect_missing_managed_components() {
     local managed_paths=(
         "$TARGET_HOME/.local/bin/code-jumplist-manager"
         "$TARGET_HOME/.local/bin/code-open-folder"
+        "$VSCODE_DESKTOP_FILE"
         "$TARGET_HOME/.local/share/kio/servicemenus/open-with-code.desktop"
         "$TARGET_HOME/.local/share/kwin/scripts/vscode-jumplist-spawner/metadata.json"
         "$TARGET_HOME/.local/share/kwin/scripts/vscode-jumplist-spawner/contents/code/main.js"
         "$TARGET_HOME/.config/vscode-jumplist/layout-map.json"
+        "$TARGET_HOME/.config/systemd/user/$VSCODE_WATCH_PATH_UNIT"
+        "$TARGET_HOME/.config/systemd/user/$VSCODE_WATCH_SERVICE_UNIT"
+        "$TARGET_HOME/.config/voxtype/config.toml"
+        "$TARGET_HOME/.local/share/voxtype-ptt-tray/voxtype-ptt-tray.py"
+        "$TARGET_HOME/.local/share/applications/voxtype-ptt-tray.desktop"
+        "$VOXTYPE_SHORTCUT_DESKTOP"
+        "$TARGET_HOME/.config/systemd/user/voxtype-ptt-tray.service"
+        "$TARGET_HOME/.local/bin/whatsie-flatpak-x11"
+        "$TARGET_HOME/.local/bin/whatsie-tray-launcher"
+        "$TARGET_HOME/.local/bin/whatsie-open"
+        "$TARGET_HOME/.local/bin/whatsie-theme-guard"
+        "$TARGET_HOME/.config/systemd/user/$WHATSIE_SERVICE"
+        "$WHATSIE_AUTOSTART"
         "$TARGET_HOME/.config/fish/functions/fastfetch.fish"
         "$TARGET_HOME/.config/systemd/user/hubstaff.service"
         "$TARGET_HOME/Hubstaff/hubstaff-launcher.sh"
@@ -96,6 +134,14 @@ collect_missing_managed_components() {
         if [ ! -e "$path" ]; then
             printf '%s\n' "$path"
         fi
+    done
+}
+
+collect_missing_voxtype_packages() {
+    local package_name
+
+    for package_name in "${KDE_POST_REPAIR_VOXTYPE_PACKAGES[@]}"; do
+        pacman -Qq "$package_name" >/dev/null 2>&1 || printf '%s\n' "$package_name"
     done
 }
 
@@ -171,18 +217,34 @@ collect_stale_disabled_autostarts() {
     find "$TARGET_HOME/.config/autostart" -maxdepth 1 -type f -name '*.desktop.disabled' 2>/dev/null | sort || true
 }
 
+plasma_versions_match_baseline() {
+    kde_post_repair_assert_plasma_baseline >/dev/null 2>&1
+}
+
+plasma_packages_are_patched() {
+    [ "$(pacman -Q libplasma 2>/dev/null | awk '{print $2}')" = "$KDE_POST_REPAIR_PLASMA_PATCHED_VERSION" ] && \
+        [ "$(pacman -Q plasma-desktop 2>/dev/null | awk '{print $2}')" = "$KDE_POST_REPAIR_PLASMA_PATCHED_VERSION" ]
+}
+
 libplasma_is_patched() {
-    rg -q "secondaryAction" /usr/lib/qt6/qml/org/kde/plasma/extras 2>/dev/null
+    [ -f "$LIBPLASMA_PLUGIN" ] && grep -aFq "secondaryAction" "$LIBPLASMA_PLUGIN"
 }
 
 plasma_desktop_is_patched() {
-    # The taskmanager QML is compiled to bytecode in Plasma 6.7, so neither the
-    # old loose-ContextMenu.qml grep nor a strings(1) scan of the built applet
-    # can see "groupJumpListActions" -- both report a false negative. The patch
-    # IS verified at source level by build-patched-plasma-packages.sh, which
-    # fails the build if it stops applying, so key on the pkgrel marker that
-    # only our rebuild produces.
-    pacman -Q plasma-desktop 2>/dev/null | rg -q -- '-1\.1$'
+    # Plasma 6.7 compiles ContextMenu.qml into this package-owned plugin; the
+    # old /usr/share/plasma/.../ContextMenu.qml path no longer exists. Qt's
+    # AOT compiler also strips JavaScript helper/property identifiers, so the
+    # reviewed -1.1 package version plus its compiled ContextMenu payload is
+    # the durable installed-state check.
+    [ "$(pacman -Q plasma-desktop 2>/dev/null | awk '{print $2}')" = "$KDE_POST_REPAIR_PLASMA_PATCHED_VERSION" ] && \
+        [ -f "$TASKMANAGER_PLUGIN" ] && \
+        grep -aFq "ContextMenu.qml" "$TASKMANAGER_PLUGIN"
+}
+
+plasma_plugins_link_cleanly() {
+    [ -f "$LIBPLASMA_PLUGIN" ] && [ -f "$TASKMANAGER_PLUGIN" ] && \
+        ldd -r "$LIBPLASMA_PLUGIN" >/dev/null 2>&1 && \
+        ldd -r "$TASKMANAGER_PLUGIN" >/dev/null 2>&1
 }
 
 plasma_desktop_folder_view_is_patched() {
@@ -205,7 +267,80 @@ stale_folder_view_overrides() {
 }
 
 pacman_holds_are_present() {
-    rg -q "IgnorePkg = .*libplasma.*plasma-desktop|IgnorePkg = .*plasma-desktop.*libplasma" /etc/pacman.conf 2>/dev/null
+    kde_post_repair_pacman_hold_is_managed
+}
+
+plasma_transaction_guard_is_managed() {
+    [ -x "$PLASMA_GUARD_EXEC" ] && [ -f "$PLASMA_GUARD_HOOK" ] && \
+        cmp -s "$REPO_ROOT/scripts/plasma-package-guard" "$PLASMA_GUARD_EXEC" && \
+        cmp -s "$REPO_ROOT/config/pacman-hooks/95-kde-patched-plasma-guard.hook" "$PLASMA_GUARD_HOOK"
+}
+
+vscode_launcher_icon_is_correct() {
+    [ -f "$VSCODE_DESKTOP_FILE" ] && \
+        grep -Eq '^Icon=(vscode|/usr/share/pixmaps/vscode\.png)$' "$VSCODE_DESKTOP_FILE" && \
+        ! grep -Fxq "Icon=visual-studio-code" "$VSCODE_DESKTOP_FILE" && \
+        [ -r /usr/share/pixmaps/vscode.png ]
+}
+
+vscode_watch_path_is_healthy() {
+    local unit_file="$TARGET_HOME/.config/systemd/user/$VSCODE_WATCH_PATH_UNIT"
+    local service_file="$TARGET_HOME/.config/systemd/user/$VSCODE_WATCH_SERVICE_UNIT"
+
+    [ -f "$unit_file" ] && [ -f "$service_file" ] && \
+        grep -Fq ".config/Code/User/globalStorage/storage.json" "$unit_file" && \
+        run_as_target_user systemctl --user is-enabled --quiet "$VSCODE_WATCH_PATH_UNIT" && \
+        run_as_target_user systemctl --user is-active --quiet "$VSCODE_WATCH_PATH_UNIT"
+}
+
+vscode_kwin_helper_is_enabled() {
+    [ -f "$TARGET_HOME/.local/share/kwin/scripts/vscode-jumplist-spawner/metadata.json" ] && \
+        [ -f "$TARGET_HOME/.local/share/kwin/scripts/vscode-jumplist-spawner/contents/code/main.js" ] && \
+        [ "$(run_as_target_user kreadconfig6 --file kwinrc --group Plugins --key vscode-jumplist-spawnerEnabled 2>/dev/null || true)" = "true" ]
+}
+
+voxtype_version_is_supported() {
+    local version
+    version="$(pacman -Q voxtype-bin 2>/dev/null | awk '{print $2}')"
+    [[ "$version" = 0.7.5 || "$version" = 0.7.5-* ]]
+}
+
+voxtype_models_are_present() {
+    [ -s "$VOXTYPE_CORE_MODEL" ] && \
+        [ -s "$VOXTYPE_TURBO_MODEL" ] && \
+        [ -d "$VOXTYPE_WAKE_MODEL" ] && \
+        [ -n "$(find "$VOXTYPE_WAKE_MODEL" -type f -print -quit 2>/dev/null)" ]
+}
+
+voxtype_services_are_healthy() {
+    run_as_target_user systemctl --user is-enabled --quiet voxtype.service && \
+        run_as_target_user systemctl --user is-active --quiet voxtype.service && \
+        run_as_target_user systemctl --user is-enabled --quiet voxtype-ptt-tray.service && \
+        run_as_target_user systemctl --user is-active --quiet voxtype-ptt-tray.service
+}
+
+voxtype_shortcut_is_configured() {
+    [ -f "$VOXTYPE_SHORTCUT_DESKTOP" ] && \
+        grep -Fxq 'Exec=/usr/bin/voxtype record toggle' "$VOXTYPE_SHORTCUT_DESKTOP" && \
+        grep -Fxq 'X-KDE-Shortcuts=Shift+Alt' "$VOXTYPE_SHORTCUT_DESKTOP" && \
+        grep -Eq '^model[[:space:]]*=[[:space:]]*"large-v3-turbo"[[:space:]]*$' "$TARGET_HOME/.config/voxtype/config.toml"
+}
+
+voxtype_legacy_autostarts_are_absent() {
+    [ ! -e "$TARGET_HOME/.config/autostart/voxtype-live.desktop" ] && \
+        [ ! -e "$TARGET_HOME/.config/autostart/voxtype-meta-alt.desktop" ] && \
+        [ ! -e "$TARGET_HOME/.config/systemd/user/voxtype-live.service" ]
+}
+
+whatsie_theme_guard_is_healthy() {
+    run_as_target_user flatpak info com.ktechpit.whatsie >/dev/null 2>&1 && \
+        [ -f "$WHATSIE_CONFIG" ] && \
+        grep -Fxq 'windowTheme=dark' "$WHATSIE_CONFIG" && \
+        grep -Fxq 'automaticTheme=false' "$WHATSIE_CONFIG" && \
+        [ -f "$WHATSIE_AUTOSTART" ] && \
+        grep -Fxq 'Hidden=true' "$WHATSIE_AUTOSTART" && \
+        run_as_target_user systemctl --user is-enabled --quiet "$WHATSIE_SERVICE" && \
+        run_as_target_user systemctl --user is-active --quiet "$WHATSIE_SERVICE"
 }
 
 kwin_custom_build_stamp_present() {
@@ -221,10 +356,12 @@ user_failed_services() {
 }
 
 print_audit_report() {
-    local missing_packages missing_components broken_launchers stale_disabled_autostarts failed_services
+    local missing_packages missing_components missing_voxtype_packages
+    local broken_launchers stale_disabled_autostarts failed_services
 
     missing_packages="$(collect_missing_packages || true)"
     missing_components="$(collect_missing_managed_components || true)"
+    missing_voxtype_packages="$(collect_missing_voxtype_packages || true)"
     broken_launchers="$(collect_broken_launchers || true)"
     stale_disabled_autostarts="$(collect_stale_disabled_autostarts || true)"
     failed_services="$(user_failed_services || true)"
@@ -238,15 +375,36 @@ print_audit_report() {
     echo
 
     echo "== Plasma Patch State =="
-    if libplasma_is_patched; then
-        echo "libplasma: patched"
+    pacman -Q libplasma plasma-desktop 2>/dev/null || true
+    if plasma_versions_match_baseline; then
+        echo "baseline: compatible with $KDE_POST_REPAIR_PLASMA_SOURCE_VERSION"
     else
-        echo "libplasma: missing secondary-action patch"
+        echo "baseline: MISMATCH; apply/build will refuse to continue"
+    fi
+    if plasma_packages_are_patched; then
+        echo "package versions: reviewed patched pair"
+    else
+        echo "package versions: not the patched $KDE_POST_REPAIR_PLASMA_PATCHED_VERSION pair"
+    fi
+    if libplasma_is_patched; then
+        echo "libplasma plugin: secondaryAction present"
+    else
+        echo "libplasma plugin: missing secondaryAction"
     fi
     if plasma_desktop_is_patched; then
-        echo "plasma-desktop: patched"
+        echo "task-manager plugin: grouped jump-list row present"
     else
-        echo "plasma-desktop: missing jumplist grouping patch"
+        echo "task-manager plugin: missing grouped jump-list row"
+    fi
+    if plasma_plugins_link_cleanly; then
+        echo "plugin linkage: clean"
+    else
+        echo "plugin linkage: unresolved or missing plugin"
+    fi
+    if pacman -Qkk libplasma plasma-desktop >/dev/null 2>&1; then
+        echo "package file integrity: clean"
+    else
+        echo "package file integrity: failed"
     fi
     if plasma_desktop_folder_view_is_patched; then
         echo "plasma-desktop folder view: patched (link badge + folder colour on shortcuts)"
@@ -261,9 +419,74 @@ print_audit_report() {
         printf '  %s\n' $stale_overrides
     fi
     if pacman_holds_are_present; then
-        echo "pacman holds: active"
+        echo "pacman holds: managed block active"
     else
-        echo "pacman holds: missing"
+        echo "pacman holds: managed block missing or malformed"
+    fi
+    if plasma_transaction_guard_is_managed; then
+        echo "transaction guard: managed deny-by-default hook active"
+    else
+        echo "transaction guard: missing or unmanaged"
+    fi
+    echo
+
+    echo "== VS Code Taskbar Integration =="
+    if vscode_launcher_icon_is_correct; then
+        echo "launcher icon: vendor vscode icon or packaged fallback"
+    else
+        echo "launcher icon: incorrect or vendor fallback missing"
+    fi
+    if vscode_watch_path_is_healthy; then
+        echo "recent-place watcher: enabled, active, and watching storage.json"
+    else
+        echo "recent-place watcher: missing, inactive, or misconfigured"
+    fi
+    if vscode_kwin_helper_is_enabled; then
+        echo "KWin placement helper: installed and enabled"
+    else
+        echo "KWin placement helper: missing or disabled"
+    fi
+    echo
+
+    echo "== VoxType PTT Tray =="
+    if [ -n "$missing_voxtype_packages" ]; then
+        echo "missing packages:"
+        printf '%s\n' "$missing_voxtype_packages"
+    else
+        echo "packages: installed"
+    fi
+    if command -v voxtype >/dev/null 2>&1 && voxtype_version_is_supported; then
+        echo "voxtype: stable 0.7.5"
+    else
+        echo "voxtype: missing or not stable 0.7.5"
+    fi
+    if voxtype_models_are_present; then
+        echo "models: base.en, large-v3-turbo, and pinned Vosk wake model present"
+    else
+        echo "models: base.en, large-v3-turbo, or pinned Vosk wake model missing"
+    fi
+    if voxtype_services_are_healthy; then
+        echo "services: core and PTT tray enabled and active"
+    else
+        echo "services: core or PTT tray missing, disabled, or inactive"
+    fi
+    if voxtype_shortcut_is_configured; then
+        echo "shortcut: Shift+Alt toggle with large-v3-turbo selected"
+    else
+        echo "shortcut: Shift+Alt toggle missing or large-v3-turbo not selected"
+    fi
+    if voxtype_legacy_autostarts_are_absent; then
+        echo "legacy autostarts: absent"
+    else
+        echo "legacy autostarts: old live or Meta/Alt integration remains"
+    fi
+    echo
+
+    echo "== WhatSie Theme Guard =="
+    if whatsie_theme_guard_is_healthy; then
+        echo "dark theme: persisted; ordered tray service enabled and active"
+    else
+        echo "dark theme: guard missing, inactive, or misconfigured"
     fi
     echo
 
@@ -377,35 +600,18 @@ disable_broken_launchers() {
 
 ensure_pacman_holds() {
     log_info "Holding patched Plasma packages in pacman.conf ..."
-    sudo python3 - <<'PY'
-from pathlib import Path
-import re
+    kde_post_repair_ensure_pacman_hold
+    pacman_holds_are_present || die "Failed to install the managed Plasma package hold."
+}
 
-pacman_conf = Path("/etc/pacman.conf")
-start_marker = "# >>> KDE post-repair holds >>>"
-end_marker = "# <<< KDE post-repair holds <<<"
-block = """# >>> KDE post-repair holds >>>
-IgnorePkg = libplasma plasma-desktop
-# <<< KDE post-repair holds <<<
-"""
-
-content = pacman_conf.read_text()
-# Remove any previously injected block, even if it landed in the wrong section.
-content = re.sub(
-    rf"\n?{re.escape(start_marker)}\n.*?{re.escape(end_marker)}\n?",
-    "\n",
-    content,
-    flags=re.DOTALL,
-)
-
-options_match = re.search(r"^\[options\]\n", content, flags=re.MULTILINE)
-if not options_match:
-    raise SystemExit("Could not find [options] section in /etc/pacman.conf")
-
-insert_at = options_match.end()
-content = content[:insert_at] + block + "\n" + content[insert_at:]
-pacman_conf.write_text(content)
-PY
+verify_patched_plasma_installation() {
+    plasma_packages_are_patched || \
+        die "libplasma and plasma-desktop were not installed as the reviewed patched pair."
+    libplasma_is_patched || die "Installed libplasma is missing secondaryAction."
+    plasma_desktop_is_patched || die "Installed task-manager plugin is missing jump-list grouping."
+    plasma_plugins_link_cleanly || die "Installed patched Plasma plugins have unresolved dependencies."
+    pacman -Qkk libplasma plasma-desktop >/dev/null || \
+        die "Installed patched Plasma packages failed pacman -Qkk."
 }
 
 rebuild_custom_kwin() {
@@ -413,10 +619,50 @@ rebuild_custom_kwin() {
     sudo env KDE_ROOT="$REPO_ROOT" KWIN_SRC="$REPO_ROOT/kde-kwin" TARGET_USER="$TARGET_USER" TARGET_HOME="$TARGET_HOME" "$SCRIPT_DIR/install-custom-kwin.sh"
 }
 
+restore_voxtype_integration_if_ready() {
+    local installer="$SCRIPT_DIR/install-voxtype-ptt-tray.sh"
+    local missing_packages
+
+    if [ ! -x /usr/bin/voxtype ]; then
+        log_warn "VoxType is not installed; leaving PTT tray restoration pending."
+        return
+    fi
+    missing_packages="$(collect_missing_voxtype_packages || true)"
+    if [ -n "$missing_packages" ]; then
+        log_warn "VoxType dependencies are incomplete; leaving PTT tray restoration pending: ${missing_packages//$'\n'/, }"
+        return
+    fi
+    if [ ! -x "$installer" ]; then
+        log_warn "VoxType PTT tray installer is missing from the repository."
+        return
+    fi
+    if ! voxtype_models_are_present; then
+        log_warn "VoxType models are incomplete; installing tray files but not starting the services."
+        run_as_target_user "$installer"
+        return
+    fi
+
+    run_as_target_user "$installer"
+    run_as_target_user systemctl --user daemon-reload
+    run_as_target_user systemctl --user enable --now voxtype.service voxtype-ptt-tray.service
+}
+
+restore_whatsie_theme_guard_if_ready() {
+    if ! run_as_target_user flatpak info com.ktechpit.whatsie >/dev/null 2>&1; then
+        log_warn "WhatSie Flatpak is not installed; leaving its theme guard pending."
+        return
+    fi
+    run_as_target_user "$SCRIPT_DIR/install-whatsie-theme-guard.sh"
+}
+
 reload_user_session_state() {
     run_as_target_user systemctl --user daemon-reload >/dev/null 2>&1 || true
     run_as_target_user kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
     run_as_target_user qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+    if run_as_target_user systemctl --user is-active --quiet plasma-plasmashell.service; then
+        run_as_target_user systemctl --user restart plasma-plasmashell.service || \
+            log_warn "Unable to restart Plasma Shell; log out and back in to load repaired plugins."
+    fi
 }
 
 apply_restore() {
@@ -429,9 +675,12 @@ apply_restore() {
     run_as_target_user "$SCRIPT_DIR/install-touchscreen-mapping.sh"
     run_as_target_user "$SCRIPT_DIR/install-fastfetch-fish.sh"
     move_stale_disabled_autostarts
-    sudo env TARGET_USER="$TARGET_USER" TARGET_HOME="$TARGET_HOME" "$SCRIPT_DIR/build-patched-plasma-packages.sh" --apply
     ensure_pacman_holds
+    sudo env TARGET_USER="$TARGET_USER" TARGET_HOME="$TARGET_HOME" "$SCRIPT_DIR/build-patched-plasma-packages.sh" --apply
+    verify_patched_plasma_installation
     rebuild_custom_kwin
+    restore_voxtype_integration_if_ready
+    restore_whatsie_theme_guard_if_ready
     disable_broken_launchers
     reload_user_session_state
 }
@@ -441,6 +690,8 @@ main() {
 
     if [ "$MODE" = "apply" ]; then
         require_sudo_access
+        kde_post_repair_assert_plasma_baseline || \
+            die "Installed Plasma does not match the reviewed $KDE_POST_REPAIR_PLASMA_SOURCE_VERSION baseline; update the repo baseline and patches before applying repairs."
         apply_restore
     fi
 

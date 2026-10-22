@@ -12,20 +12,32 @@ import sys
 import time
 from pathlib import Path
 
+# Keep browser WebRTC capture on normal scheduling.  RTKit 0.14's runtime
+# limit kills capture clients on this system when their microphone opens.
+os.environ.setdefault("DISABLE_RTKIT", "1")
+
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 APP_DIR = Path.home() / ".local" / "share" / "chatgpt-webapp"
-PROFILE_DIR = APP_DIR / "profile"
 EXTENSION_DIR = APP_DIR / "extension"
 ICON_PATH = Path.home() / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps" / "chatgpt-webapp.png"
 PID_FILE = APP_DIR / "tray-supervisor.pid"
+BROWSER_LOG_PATH = APP_DIR / "browser.log"
 WINDOW_CLASS = "chatgpt.com.ChatGPTWebApp"
-WINDOW_TITLE = "ChatGPT"
 
 signal_pending = False
+browser_process: subprocess.Popen[bytes] | None = None
+
+BROWSER_REALTIME_ARGS = (
+    # A docked/occluded app window must keep its WebRTC audio timers and
+    # renderer alive for ChatGPT voice conversations.
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+)
 
 
 def run_capture(*args: str) -> str:
@@ -61,7 +73,7 @@ def find_window_id() -> str | None:
         parts = line.split(None, 4)
         if len(parts) < 5:
             continue
-        if parts[2] == WINDOW_CLASS or WINDOW_TITLE in line or "ChatGPTWebApp" in line:
+        if parts[2] == WINDOW_CLASS or "chatgptwebapp" in parts[2].lower():
             return parts[0]
     return None
 
@@ -75,6 +87,12 @@ def focus_window() -> bool:
 
 
 def pick_browser() -> str:
+    preferred = os.environ.get("CHATGPT_BROWSER")
+    if preferred:
+        if shutil.which(preferred):
+            return preferred
+        raise RuntimeError(f"Configured CHATGPT_BROWSER was not found: {preferred}")
+
     for candidate in (
         "chromium",
         "chromium-browser",
@@ -89,37 +107,74 @@ def pick_browser() -> str:
     raise RuntimeError("No supported Chromium-based browser found.")
 
 
+def profile_dir_for_browser(browser: str) -> Path:
+    browser_name = Path(browser).name
+    if browser_name in ("chromium", "chromium-browser"):
+        return APP_DIR / "profile-chromium"
+    if browser_name in ("microsoft-edge-stable", "microsoft-edge"):
+        return APP_DIR / "profile-edge"
+    if browser_name in ("google-chrome-stable", "google-chrome"):
+        return APP_DIR / "profile-chrome"
+    raise RuntimeError(f"Unsupported Chromium-based browser: {browser}")
+
+
 def browser_command() -> list[str]:
     browser = pick_browser()
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    profile_dir = profile_dir_for_browser(browser)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Launching {browser} with isolated profile {profile_dir}", flush=True)
     return [
         browser,
         "--app=https://chatgpt.com/",
-        f"--user-data-dir={PROFILE_DIR}",
+        f"--user-data-dir={profile_dir}",
         "--profile-directory=Default",
         f"--disable-extensions-except={EXTENSION_DIR}",
         f"--load-extension={EXTENSION_DIR}",
         "--class=ChatGPTWebApp",
         "--ozone-platform=x11",
+        "--enable-logging=stderr",
+        *BROWSER_REALTIME_ARGS,
         "--new-window",
     ]
 
 
 def launch_or_focus() -> None:
+    global browser_process
+
     if focus_window():
         return
 
-    subprocess.Popen(
-        browser_command(),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    if browser_process is not None and browser_process.poll() is None:
+        return
+
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    if BROWSER_LOG_PATH.exists() and BROWSER_LOG_PATH.stat().st_size > 2_000_000:
+        BROWSER_LOG_PATH.replace(BROWSER_LOG_PATH.with_suffix(".log.old"))
+    with BROWSER_LOG_PATH.open("ab", buffering=0) as browser_log:
+        browser_process = subprocess.Popen(
+            browser_command(),
+            stdout=browser_log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
     for _ in range(40):
         time.sleep(0.5)
         if focus_window():
             return
+
+
+def reap_browser_process() -> None:
+    """Reap a closed/crashed browser and record its exit status."""
+    global browser_process
+
+    if browser_process is None:
+        return
+    return_code = browser_process.poll()
+    if return_code is None:
+        return
+    print(f"ChatGPT browser exited with status {return_code}", flush=True)
+    browser_process = None
 
 
 def close_window() -> None:
@@ -206,6 +261,10 @@ def main() -> int:
     signal_timer = QTimer()
     signal_timer.timeout.connect(process_signal_requests)
     signal_timer.start(250)
+
+    browser_timer = QTimer()
+    browser_timer.timeout.connect(reap_browser_process)
+    browser_timer.start(1000)
 
     QTimer.singleShot(0, launch_or_focus)
     return app.exec()

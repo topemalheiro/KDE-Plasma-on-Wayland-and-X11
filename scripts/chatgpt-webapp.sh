@@ -6,9 +6,12 @@
 
 set -euo pipefail
 
+# RTKit 0.14 can impose a realtime runtime limit that kills long-lived audio
+# capture clients on this system. PipeWire supports this opt-out natively.
+export DISABLE_RTKIT="${DISABLE_RTKIT:-1}"
+
 CHATGPT_URL="${CHATGPT_URL:-https://chatgpt.com/}"
 APP_DIR="${CHATGPT_APP_DIR:-$HOME/.local/share/chatgpt-webapp}"
-PROFILE_DIR="$APP_DIR/profile"
 EXTENSION_DIR="${CHATGPT_EXTENSION_DIR:-$APP_DIR/extension}"
 ICON_FILE="${CHATGPT_ICON_FILE:-$HOME/.local/share/icons/hicolor/32x32/apps/chatgpt-webapp.png}"
 WINDOW_PATTERN="${CHATGPT_WINDOW_PATTERN:-^ChatGPT($|[[:space:]-])}"
@@ -16,6 +19,13 @@ WINDOW_CLASS="${CHATGPT_WINDOW_CLASS:-chatgpt.com.ChatGPTWebApp}"
 SUPERVISOR_SCRIPT="$APP_DIR/chatgpt-webapp-tray.py"
 SUPERVISOR_PID_FILE="$APP_DIR/tray-supervisor.pid"
 SUPERVISOR_LOG_FILE="$APP_DIR/tray-supervisor.log"
+BROWSER_REALTIME_ARGS=(
+    # KDocker can make the app window occluded while a voice session remains
+    # active. Keep Chromium from throttling the page's WebRTC timers/renderer.
+    --disable-background-timer-throttling
+    --disable-backgrounding-occluded-windows
+    --disable-renderer-backgrounding
+)
 
 INTERNAL_BROWSER_MODE=false
 if [ "${1:-}" = "--internal-browser" ]; then
@@ -23,10 +33,19 @@ if [ "${1:-}" = "--internal-browser" ]; then
     shift
 fi
 
-mkdir -p "$PROFILE_DIR"
+mkdir -p "$APP_DIR"
 
 pick_browser() {
     local candidate
+
+    if [ -n "${CHATGPT_BROWSER:-}" ]; then
+        command -v "$CHATGPT_BROWSER" >/dev/null 2>&1 || {
+            echo "Configured CHATGPT_BROWSER was not found: $CHATGPT_BROWSER" >&2
+            return 1
+        }
+        printf '%s\n' "$CHATGPT_BROWSER"
+        return 0
+    fi
 
     for candidate in \
         chromium \
@@ -45,6 +64,26 @@ pick_browser() {
     return 1
 }
 
+browser_profile_dir() {
+    local browser_name="${1##*/}"
+
+    case "$browser_name" in
+        chromium|chromium-browser)
+            printf '%s\n' "$APP_DIR/profile-chromium"
+            ;;
+        microsoft-edge-stable|microsoft-edge)
+            printf '%s\n' "$APP_DIR/profile-edge"
+            ;;
+        google-chrome-stable|google-chrome)
+            printf '%s\n' "$APP_DIR/profile-chrome"
+            ;;
+        *)
+            echo "Unsupported Chromium-based browser: $1" >&2
+            return 1
+            ;;
+    esac
+}
+
 focus_existing_window() {
     local window_id
 
@@ -53,7 +92,7 @@ focus_existing_window() {
     window_id="$(
         wmctrl -lx 2>/dev/null \
             | awk -v window_class="$WINDOW_CLASS" '
-                $3 == window_class || tolower($0) ~ /chatgptwebapp/ || $0 ~ /ChatGPT/ {
+                $3 == window_class || tolower($3) ~ /chatgptwebapp/ {
                     print $1
                     exit
                 }
@@ -69,7 +108,7 @@ find_chatgpt_window() {
 
     wmctrl -lx 2>/dev/null \
         | awk -v window_class="$WINDOW_CLASS" '
-            $3 == window_class || tolower($0) ~ /chatgptwebapp/ || $0 ~ /ChatGPT/ {
+            $3 == window_class || tolower($3) ~ /chatgptwebapp/ {
                 print $1
                 exit
             }
@@ -94,22 +133,26 @@ wait_for_chatgpt_window() {
 
 launch_browser() {
     local browser
+    local profile_dir
 
     browser="$(pick_browser)" || {
         echo "No supported Chromium-based browser found (chromium, edge, or chrome)." >&2
         exit 1
     }
+    profile_dir="$(browser_profile_dir "$browser")"
+    mkdir -p "$profile_dir"
 
     case "$browser" in
         chromium|chromium-browser|microsoft-edge-stable|microsoft-edge|google-chrome-stable|google-chrome)
             exec "$browser" \
                 --app="$CHATGPT_URL" \
-                --user-data-dir="$PROFILE_DIR" \
+                --user-data-dir="$profile_dir" \
                 --profile-directory=Default \
                 --disable-extensions-except="$EXTENSION_DIR" \
                 --load-extension="$EXTENSION_DIR" \
                 --class=ChatGPTWebApp \
                 --ozone-platform=x11 \
+                "${BROWSER_REALTIME_ARGS[@]}" \
                 --new-window \
                 "$@"
             ;;
@@ -118,22 +161,26 @@ launch_browser() {
 
 launch_browser_background() {
     local browser
+    local profile_dir
 
     browser="$(pick_browser)" || {
         echo "No supported Chromium-based browser found (chromium, edge, or chrome)." >&2
         exit 1
     }
+    profile_dir="$(browser_profile_dir "$browser")"
+    mkdir -p "$profile_dir"
 
     case "$browser" in
         chromium|chromium-browser|microsoft-edge-stable|microsoft-edge|google-chrome-stable|google-chrome)
             "$browser" \
                 --app="$CHATGPT_URL" \
-                --user-data-dir="$PROFILE_DIR" \
+                --user-data-dir="$profile_dir" \
                 --profile-directory=Default \
                 --disable-extensions-except="$EXTENSION_DIR" \
                 --load-extension="$EXTENSION_DIR" \
                 --class=ChatGPTWebApp \
                 --ozone-platform=x11 \
+                "${BROWSER_REALTIME_ARGS[@]}" \
                 --new-window \
                 "$@" \
                 >/dev/null 2>&1 &

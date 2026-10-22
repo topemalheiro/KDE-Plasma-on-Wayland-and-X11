@@ -13,7 +13,8 @@ LAUNCHER="$BIN_DIR/$APP_NAME"
 DESKTOP_FILE="$APP_DIR/$APP_NAME.desktop"
 EXTENSION_DEST="$WEBAPP_DIR/extension"
 SUPERVISOR_DEST="$WEBAPP_DIR/chatgpt-webapp-tray.py"
-FAVICON_DB="$WEBAPP_DIR/profile/Default/Favicons"
+CHROMIUM_FAVICON_DB="$WEBAPP_DIR/profile-chromium/Default/Favicons"
+LEGACY_FAVICON_DB="$WEBAPP_DIR/profile/Default/Favicons"
 ICON_256="$ICON_ROOT/256x256/apps/$APP_NAME.png"
 OLD_APPIMAGE="$HOME/.local/opt/chatgpt-desktop/ChatGPT.AppImage"
 OLD_LAUNCHER="$BIN_DIR/chatgpt-desktop"
@@ -22,18 +23,23 @@ OLD_DESKTOP_FILE="$APP_DIR/chatgpt-desktop.desktop"
 log_warn() { echo "[WARN] $1" >&2; }
 
 install_chatgpt_icon() {
+    local favicon_db
     local icon_hex
     local tmp_png
 
-    if [ ! -f "$FAVICON_DB" ]; then
-        log_warn "Cached ChatGPT favicon database not found: $FAVICON_DB"
+    if [ -f "$CHROMIUM_FAVICON_DB" ]; then
+        favicon_db="$CHROMIUM_FAVICON_DB"
+    elif [ -f "$LEGACY_FAVICON_DB" ]; then
+        favicon_db="$LEGACY_FAVICON_DB"
+    else
+        log_warn "Cached ChatGPT favicon database not found in the Chromium or legacy profile."
         return
     fi
 
     tmp_png="$(mktemp --suffix=.png)"
 
     icon_hex="$(
-        sqlite3 "$FAVICON_DB" "
+        sqlite3 "$favicon_db" "
             select hex(favicon_bitmaps.image_data)
             from favicons
             join favicon_bitmaps on favicons.id = favicon_bitmaps.icon_id
@@ -72,12 +78,12 @@ install_chatgpt_icon() {
 disable_stale_appimage_launcher() {
     local resolved_launcher
 
-    [ -f "$OLD_DESKTOP_FILE" ] || return
-    [ -L "$OLD_LAUNCHER" ] || return
+    [ -f "$OLD_DESKTOP_FILE" ] || return 0
+    [ -L "$OLD_LAUNCHER" ] || return 0
 
     resolved_launcher="$(readlink -f "$OLD_LAUNCHER")"
-    [ "$resolved_launcher" = "$OLD_APPIMAGE" ] || return
-    grep -Fq "Exec=$OLD_LAUNCHER %U" "$OLD_DESKTOP_FILE" || return
+    [ "$resolved_launcher" = "$OLD_APPIMAGE" ] || return 0
+    grep -Fq "Exec=$OLD_LAUNCHER %U" "$OLD_DESKTOP_FILE" || return 0
 
     grep -q '^NoDisplay=true$' "$OLD_DESKTOP_FILE" || printf '\nNoDisplay=true\n' >> "$OLD_DESKTOP_FILE"
     grep -q '^Hidden=true$' "$OLD_DESKTOP_FILE" || printf 'Hidden=true\n' >> "$OLD_DESKTOP_FILE"
