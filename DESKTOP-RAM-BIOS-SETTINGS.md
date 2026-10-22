@@ -2,7 +2,7 @@
 
 ASUS ProArt Z790-CREATOR WIFI running four DDR5 sticks from two different kits. Use this after a CMOS clear, a BIOS update, or anything else that resets the BIOS.
 
-> **Status, 22 Oct 2026 (evening):** these settings ran for over a year and booted again earlier today. After the sticks were moved and put back, training at 5867 kept failing and the board fell back to 4000. Next to try, one at a time: Mem Over Clock Fail Count 10, then CAS 38, then 5600. Once it boots at the target speed, run the full test (see [Test before trusting](#test-before-trusting)) and record the result here.
+> **Status, 22 Oct 2026 (night):** with CAS 38 and Command Rate 2N, 5867 trains and boots again. CAS 38 is most likely what ran for over a year. CAS 36 kept failing to train after the sticks were moved, and the board fell back to 4000. Still to do: the full overnight test (see [Test before trusting](#test-before-trusting)), then record the result here.
 
 ## Hardware
 
@@ -15,6 +15,8 @@ ASUS ProArt Z790-CREATOR WIFI running four DDR5 sticks from two different kits. 
 
 Each kit worked on its own when tested. The trouble only starts with all four sticks.
 
+History: a stick from an earlier pair once stopped the PC from turning on and went back to G.Skill under warranty. One Trident stick once failed on its own. The same problems also showed up on another motherboard with a different CPU, so the board and CPU are unlikely causes. If problems come back, test each stick alone in slot A2 first.
+
 ## Settings
 
 Press **Del** at boot, then **F7** for Advanced Mode. Everything below is on the **Ai Tweaker** tab.
@@ -25,10 +27,11 @@ Press **Del** at boot, then **F7** for Advanced Mode. Everything below is on the
 
    | Setting | Value |
    |---|---|
-   | DRAM CAS# Latency | 36 |
+   | DRAM CAS# Latency | 38 |
    | DRAM RAS# to CAS# Delay (Read and Write, if listed separately) | 38 |
    | DRAM RAS# PRE Time | 38 |
    | DRAM RAS# ACT Time | 96 |
+   | DRAM Command Rate | 2N |
 
 4. Leave everything else on Auto. DOCP I sets **DRAM VDD Voltage** and **DRAM VDDQ Voltage** to 1.35 V by itself.
 5. **Slots:** one kit in A2 + B2, the other kit in A1 + B1. From the CPU outward the slots are A1, A2, B1, B2; check the labels printed on the board. **Keep this layout.** One kit per channel (one kit in A1 + A2, the other in B1 + B2) was tried twice on 22 Oct 2026, once on Auto and once with these settings, and memory training never finished: it stayed on the orange DRAM light.
@@ -54,11 +57,9 @@ Unstable RAM can corrupt files without any warning, so test before using the PC 
 
 Change one thing at a time, then test again:
 
-1. **DRAM CAS# Latency:** 38 instead of 36, everything else unchanged.
-2. **DRAM Command Rate:** 2N (in DRAM Timing Control). Intel recommends 2N for mixed sticks.
-3. **DRAM Frequency:** 5600.
-4. **DRAM Frequency:** 5200.
-5. Also set the refresh timings to the JEDEC values, which are safe for any DDR5 chip:
+1. **DRAM Frequency:** 5600, same timings.
+2. **DRAM Frequency:** 5200.
+3. Also set the refresh timings to the JEDEC values, which are safe for any DDR5 chip:
 
    | DRAM Frequency | DRAM REF Cycle Time | DRAM REF Cycle Time 2 | DRAM REF Cycle Time Same Bank |
    |---|---|---|---|
@@ -66,9 +67,22 @@ Change one thing at a time, then test again:
    | 5600 | 826 | 448 | 364 |
    | 5200 | 767 | 416 | 338 |
 
-6. **Ai Overclock Tuner:** Manual, **DRAM Frequency:** 4000 (Intel's rated speed for four sticks), DRAM VDD and DRAM VDDQ Voltage 1.35 V. If even this fails, suspect hardware and test each stick alone in slot A2.
+4. **Ai Overclock Tuner:** Manual, **DRAM Frequency:** 4000 (Intel's rated speed for four sticks), DRAM VDD and DRAM VDDQ Voltage 1.35 V. If even this fails, suspect hardware and test each stick alone in slot A2.
 
 Known-good fallback: one kit alone in A2 + B2 on DOCP I / XMP I (32 GB).
+
+## Speed vs latency
+
+Frequency sets bandwidth, and CAS latency divided by frequency sets how quickly the first piece of data arrives (CL × 2000 ÷ MT/s, in nanoseconds):
+
+| Setting | Bandwidth | Latency |
+|---|---|---|
+| 5867 CL36 | 100% | 12.3 ns |
+| **5867 CL38 (current)** | 100% | 13.0 ns |
+| 5600 CL36 | 95.5% | 12.9 ns |
+| 5600 CL38 | 95.5% | 13.6 ns |
+
+The differences are a few percent, which you won't hear in Ableton. A memory error mid-set crashes the session, so the setting that trains and tests clean every time beats a slightly faster one.
 
 ## Voltages
 
