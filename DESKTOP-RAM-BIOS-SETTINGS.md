@@ -31,7 +31,7 @@ Press **Del** at boot, then **F7** for Advanced Mode. Everything below is on the
    | DRAM RAS# ACT Time | 96 |
 
 4. Leave everything else on Auto. DOCP I sets **DRAM VDD Voltage** and **DRAM VDDQ Voltage** to 1.35 V by itself.
-5. **Slots:** one kit in A2 + B2, the other kit in A1 + B1. From the CPU outward the slots are A1, A2, B1, B2; check the labels printed on the board.
+5. **Slots:** one kit in A2 + B2, the other kit in A1 + B1. From the CPU outward the slots are A1, A2, B1, B2; check the labels printed on the board. **Keep this layout.** One kit per channel (one kit in A1 + A2, the other in B1 + B2) was tried twice on 22 Oct 2026, once on Auto and once with these settings, and memory training never finished: it stayed on the orange DRAM light.
 
 Also redo after a reset:
 
@@ -61,8 +61,7 @@ Change one thing at a time, then test again:
    | 5600 | 826 | 448 | 364 |
    | 5200 | 767 | 416 | 338 |
 
-5. **One kit per channel:** one kit in A1 + A2, the other in B1 + B2. Switch off and unplug the PC before moving sticks.
-6. **Ai Overclock Tuner:** Manual, **DRAM Frequency:** 4000 (Intel's rated speed for four sticks), DRAM VDD and DRAM VDDQ Voltage 1.35 V. If even this fails, suspect hardware and test each stick alone in slot A2.
+5. **Ai Overclock Tuner:** Manual, **DRAM Frequency:** 4000 (Intel's rated speed for four sticks), DRAM VDD and DRAM VDDQ Voltage 1.35 V. If even this fails, suspect hardware and test each stick alone in slot A2.
 
 Known-good fallback: one kit alone in A2 + B2 on DOCP I / XMP I (32 GB).
 
@@ -85,7 +84,7 @@ Don't raise voltages to fix this. Lower the frequency instead.
 
 ## Why this is fiddly
 
-- Four sticks means two per channel. Intel rates that at DDR5-4000 on 12th–14th gen and doesn't guarantee any speed when the sticks in a channel have different part numbers (datasheet 743844, DDR support matrix, note 7).
+- Four sticks means two per channel. Intel rates that at DDR5-4000 on 12th–14th gen and doesn't guarantee any speed when the sticks in a channel have different part numbers (datasheet 743844, DDR support matrix, note 7). In practice, one kit per channel made this board worse, not better (see Slots above).
 - ASUS and G.Skill both say not to mix kits, and G.Skill's compatibility lists cover single kits only.
 - DOCP I / XMP I copies only CL, tRCD, tRP and tRAS from one kit's profile. The board picks every other timing itself.
 - Stability with four sticks can change between BIOS versions. BIOS 3202 (August 2026) is the latest and lists improved memory compatibility.
