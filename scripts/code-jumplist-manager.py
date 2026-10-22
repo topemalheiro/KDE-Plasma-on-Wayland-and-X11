@@ -18,13 +18,16 @@ Usage:
 """
 
 import fcntl
+import functools
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 # Paths
 STATE_DIR = Path.home() / ".config" / "vscode-jumplist"
@@ -39,6 +42,11 @@ STORAGE_FILE = VS_CODE_CONFIG / "User" / "globalStorage" / "storage.json"
 
 DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "code.desktop"
 MAX_RECENT = 10
+VENDOR_DESKTOP_FILES = (
+    Path("/usr/share/applications/code.desktop"),
+    Path("/usr/share/applications/visual-studio-code.desktop"),
+)
+VSCODE_ICON_FALLBACK = Path("/usr/share/pixmaps/vscode.png")
 
 
 def init_state():
@@ -82,6 +90,7 @@ def read_settings():
 
 
 def write_settings(settings):
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     temp = SETTINGS_FILE.with_suffix('.tmp')
     with open(temp, 'w') as f:
         json.dump(settings, f, indent=4)
@@ -99,62 +108,108 @@ def set_pinned(pinned):
     write_settings(settings)
 
 
+def file_uri_to_path(uri):
+    """Convert a local file URI from VS Code storage into an absolute path."""
+    if not isinstance(uri, str):
+        return None
+
+    parsed = urlparse(uri)
+    if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+        return None
+
+    path = unquote(parsed.path)
+    if not path:
+        return None
+    return str(Path(path).resolve())
+
+
 def sync_recent_from_vscode():
-    """Read VS Code:'s storage.json and merge open folders into our recent list."""
+    """Make recents follow VS Code's current window order.
+
+    VS Code puts the most recently active folder in ``lastActiveWindow``.  It is
+    deliberately considered before the other open and backed-up folders so an
+    already-known project moves back to the front when it is reopened.
+    """
     if not STORAGE_FILE.exists():
-        return
+        return False
 
     state = read_state()
-    recent_uris = {p["uri"] for p in state.get("recent", [])}
     pinned_uris = set(get_pinned())
 
-    with open(STORAGE_FILE, 'r') as f:
-        storage = json.load(f)
+    try:
+        with open(STORAGE_FILE, 'r') as f:
+            storage = json.load(f)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"⚠️ Could not read VS Code recent state: {error}", file=sys.stderr)
+        return False
 
-    new_folders = []
+    vscode_folders = []
     seen = set()
 
-    # Priority 1: lastActiveWindow
-    lw = storage.get('windowsState', {}).get('lastActiveWindow', {})
-    folder = lw.get('folder', '')
-    if folder.startswith('file://'):
-        path = unquote(folder[7:])
-        if path not in seen and path not in recent_uris and path not in pinned_uris:
-            new_folders.append(path)
+    def remember(uri):
+        path = file_uri_to_path(uri)
+        if path and path not in seen and path not in pinned_uris:
+            vscode_folders.append(path)
             seen.add(path)
 
+    windows_state = storage.get('windowsState', {})
+
+    # Priority 1: the folder VS Code most recently activated.
+    remember(windows_state.get('lastActiveWindow', {}).get('folder', ''))
+
     # Priority 2: openedWindows
-    for ow in storage.get('windowsState', {}).get('openedWindows', []):
-        folder = ow.get('folder', '')
-        if folder.startswith('file://'):
-            path = unquote(folder[7:])
-            if path not in seen and path not in recent_uris and path not in pinned_uris:
-                new_folders.append(path)
-                seen.add(path)
+    for opened_window in windows_state.get('openedWindows', []):
+        remember(opened_window.get('folder', ''))
 
     # Priority 3: backupWorkspaces
     for item in storage.get('backupWorkspaces', {}).get('folders', []):
-        folder = item.get('folderUri', '')
-        if folder.startswith('file://'):
-            path = unquote(folder[7:])
-            if path not in seen and path not in recent_uris and path not in pinned_uris:
-                new_folders.append(path)
-                seen.add(path)
+        remember(item.get('folderUri', ''))
 
-    # Add new folders to front of recent list
-    for path in reversed(new_folders):
-        state["recent"].insert(0, {
+    old_recent = state.get("recent", [])
+    old_by_uri = {
+        item.get("uri"): item
+        for item in old_recent
+        if isinstance(item, dict) and item.get("uri")
+    }
+    now = int(time.time())
+    merged = []
+
+    # The VS Code order is authoritative for currently known folders.  Reuse
+    # timestamps for stable entries; ordering, not needless timestamp churn,
+    # drives the jump list.
+    for path in vscode_folders:
+        existing = old_by_uri.get(path, {})
+        merged.append({
             "uri": path,
             "name": Path(path).name,
-            "timestamp": int(time.time())
+            "timestamp": existing.get("timestamp", now),
         })
 
-    state["recent"] = state["recent"][:MAX_RECENT]
+    for item in old_recent:
+        uri = item.get("uri") if isinstance(item, dict) else None
+        if not uri or uri in seen or uri in pinned_uris:
+            continue
+        merged.append({
+            "uri": uri,
+            "name": item.get("name") or Path(uri).name,
+            "timestamp": item.get("timestamp", now),
+        })
+
+    merged = merged[:MAX_RECENT]
+    if merged == old_recent:
+        return False
+
+    state["recent"] = merged
     write_state(state)
+    return True
 
 
 def with_lock(func):
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        # A fresh profile has no jump-list directory yet.  Create it before
+        # opening the lock file so the very first watcher/manual refresh works.
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
         with open(LOCK_FILE, 'w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
@@ -198,11 +253,12 @@ def add_recent(path):
     backup_state()
     state = read_state()
     state["recent"] = [p for p in state["recent"] if p["uri"] != path]
-    state["recent"].insert(0, {
-        "uri": path,
-        "name": Path(path).name,
-        "timestamp": int(time.time())
-    })
+    if path not in set(get_pinned()):
+        state["recent"].insert(0, {
+            "uri": path,
+            "name": Path(path).name,
+            "timestamp": int(time.time())
+        })
     state["recent"] = state["recent"][:MAX_RECENT]
     write_state(state)
     _regenerate_desktop(state)
@@ -251,6 +307,7 @@ def clear_recent():
     _regenerate_desktop(state)
 
 
+@with_lock
 def refresh_desktop():
     sync_recent_from_vscode()
     state = read_state()
@@ -261,7 +318,10 @@ def _regenerate_desktop(state):
     """Generate code.desktop from the given state dict (no VS Code: sync)."""
     pinned = get_pinned()
     pinned_set = set(pinned)
-    recent = [r for r in state.get("recent", []) if r["uri"] not in pinned_set]
+    recent = [
+        r for r in state.get("recent", [])
+        if r["uri"] not in pinned_set
+    ][:MAX_RECENT]
 
     actions = ["new-empty-window"]
     action_entries = []
@@ -328,12 +388,13 @@ Icon=edit-clear-history
 """)
 
     actions_str = ";".join(actions)
+    icon = resolve_vscode_icon()
     desktop_content = f"""[Desktop Entry]
 Name=Visual Studio Code:
 Comment=Code Editing. Redefined.
 GenericName=Text Editor
 Exec=/usr/bin/code %F
-Icon=visual-studio-code
+Icon={icon}
 Type=Application
 StartupNotify=false
 StartupWMClass=Code
@@ -345,13 +406,113 @@ Keywords=vscode;
 [Desktop Action new-empty-window]
 Name=New Empty Window
 Exec=/usr/bin/code --new-window %F
-Icon=visual-studio-code
+Icon={icon}
 {''.join(action_entries)}
 """
-    DESKTOP_FILE.write_text(desktop_content)
-    os.chmod(DESKTOP_FILE, 0o755)
-    os.system("kbuildsycoca6 --noincremental >/dev/null 2>&1 &")
+    DESKTOP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        unchanged = DESKTOP_FILE.read_text() == desktop_content
+    except OSError:
+        unchanged = False
+
+    if unchanged:
+        # Keep KDE's trusted-launcher bit correct without invalidating its cache.
+        if DESKTOP_FILE.stat().st_mode & 0o777 != 0o755:
+            os.chmod(DESKTOP_FILE, 0o755)
+        print("✅ Jump list already up to date.")
+        return False
+
+    atomic_write_desktop(desktop_content)
+    refresh_kde_service_cache()
     print("✅ Jump list updated. Right-click the VS Code: taskbar icon to see changes.")
+    return True
+
+
+def resolve_vscode_icon(vendor_desktops=VENDOR_DESKTOP_FILES,
+                        fallback=VSCODE_ICON_FALLBACK):
+    """Use VS Code's resolvable vendor icon, then its packaged pixmap."""
+    for desktop_file in vendor_desktops:
+        try:
+            in_desktop_entry = False
+            for line in desktop_file.read_text().splitlines():
+                stripped = line.strip()
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    in_desktop_entry = stripped == "[Desktop Entry]"
+                    continue
+                if in_desktop_entry and stripped.startswith("Icon="):
+                    icon = stripped.split("=", 1)[1].strip()
+                    if icon_is_resolvable(icon):
+                        return icon
+                    break
+        except OSError:
+            continue
+
+    if fallback.is_file():
+        return str(fallback)
+    return "vscode"
+
+
+def icon_is_resolvable(icon):
+    """Ask KDE to resolve a named icon, or validate an absolute icon path."""
+    if not icon:
+        return False
+    if os.path.isabs(icon):
+        return Path(icon).is_file()
+
+    icon_finder = shutil.which("kiconfinder6")
+    if not icon_finder:
+        return False
+
+    result = subprocess.run(
+        [icon_finder, icon],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    resolved_path = result.stdout.strip()
+    return result.returncode == 0 and bool(resolved_path) and Path(resolved_path).is_file()
+
+
+def atomic_write_desktop(content):
+    """Replace code.desktop atomically so Plasma never sees a partial file."""
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{DESKTOP_FILE.name}.",
+        dir=DESKTOP_FILE.parent,
+        text=True,
+    )
+    try:
+        with os.fdopen(file_descriptor, "w") as temporary_file:
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.chmod(temporary_name, 0o755)
+        os.replace(temporary_name, DESKTOP_FILE)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def refresh_kde_service_cache():
+    """Synchronously reload KDE's application metadata after a real change."""
+    cache_builder = shutil.which("kbuildsycoca6")
+    if not cache_builder:
+        print("⚠️ kbuildsycoca6 not found; KDE will refresh the launcher later.",
+              file=sys.stderr)
+        return
+
+    result = subprocess.run(
+        [cache_builder, "--noincremental"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        print("⚠️ KDE service-cache refresh failed; the file is installed safely.",
+              file=sys.stderr)
 
 
 def migrate_pins_from_state():

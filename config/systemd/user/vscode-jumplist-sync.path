@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch Visual Studio Code recent projects
+
+[Path]
+PathChanged=%h/.config/Code/User/globalStorage/storage.json
+Unit=vscode-jumplist-sync.service
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh KDE Recent Places from Visual Studio Code
+ConditionPathExists=%h/.local/bin/code-jumplist-manager
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/code-jumplist-manager refresh
