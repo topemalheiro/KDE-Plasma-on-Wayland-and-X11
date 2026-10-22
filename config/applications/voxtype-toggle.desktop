@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Toggle VoxType Recording
+Comment=Start or finish VoxType speech-to-text recording
+Exec=/usr/bin/voxtype record toggle
+Icon=audio-input-microphone
+Terminal=false
+NoDisplay=true
+X-KDE-Shortcuts=Shift+Alt
+
