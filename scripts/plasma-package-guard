@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly marker="/run/kde-post-repair/plasma-package-transaction.allow"
+
+deny() {
+    echo "plasma-package-guard: $1" >&2
+    echo "Rebuild and install both reviewed packages with scripts/build-patched-plasma-packages.sh --apply." >&2
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || deny "the ALPM hook did not run as root"
+
+mapfile -t targets
+mapfile -t unique_targets < <(printf '%s\n' "${targets[@]}" | sort -u)
+if [[ ${#unique_targets[@]} -ne 2 || ${unique_targets[0]} != libplasma || ${unique_targets[1]} != plasma-desktop ]]; then
+    deny "libplasma and plasma-desktop must be installed together"
+fi
+
+token="${KDE_POST_REPAIR_PLASMA_TOKEN:-}"
+[[ -n "$token" ]] || deny "this transaction was not authorized by the reviewed package installer"
+[[ -f "$marker" && ! -L "$marker" ]] || deny "the one-shot authorization marker is missing"
+
+read -r marker_owner marker_mode marker_age < <(
+    stat -c '%u %a %Y' "$marker"
+)
+[[ "$marker_owner" == 0 && "$marker_mode" == 600 ]] || deny "the authorization marker has unsafe ownership or permissions"
+(( $(date +%s) - marker_age <= 60 )) || deny "the authorization marker expired"
+
+IFS= read -r marker_token < "$marker" || true
+[[ -n "$marker_token" && "$marker_token" == "$token" ]] || deny "the authorization token does not match"
+
+# The capability is one-shot. The root installer retains a cleanup trap in case
+# pacman aborts before reaching this hook.
+rm -f -- "$marker"

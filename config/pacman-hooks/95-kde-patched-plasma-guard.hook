@@ -1,0 +1,13 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = libplasma
+Target = plasma-desktop
+
+[Action]
+Description = Guarding the patched libplasma/plasma-desktop pair
+When = PreTransaction
+Exec = /usr/local/lib/kde-post-repair/plasma-package-guard
+AbortOnFail
+NeedsTargets
