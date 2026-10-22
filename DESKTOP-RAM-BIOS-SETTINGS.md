@@ -2,7 +2,7 @@
 
 ASUS ProArt Z790-CREATOR WIFI running four DDR5 sticks from two different kits. Use this after a CMOS clear, a BIOS update, or anything else that resets the BIOS.
 
-> **Status, 22 Oct 2026 (night):** with CAS 38 and Command Rate 2N, 5867 trains and boots again. CAS 38 is most likely what ran for over a year. CAS 36 kept failing to train after the sticks were moved, and the board fell back to 4000. Still to do: the full overnight test (see [Test before trusting](#test-before-trusting)), then record the result here.
+> **Status, 22 Oct 2026 (night):** with CAS 38 and Command Rate 2N, 5867 trains and boots again. CAS 38 and Command Rate 2N are most likely what ran for over a year; 2N was set by hand then too, not left on Auto. CAS 36 kept failing to train after the sticks were moved, and the board fell back to 4000. Still to do: the full overnight test (see [Test before trusting](#test-before-trusting)), then record the result here.
 
 ## Hardware
 
