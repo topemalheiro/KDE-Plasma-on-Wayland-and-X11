@@ -2,7 +2,7 @@
 
 ASUS ProArt Z790-CREATOR WIFI running four DDR5 sticks from two different kits. Use this after a CMOS clear, a BIOS update, or anything else that resets the BIOS.
 
-> **Status, 22 Oct 2026:** these settings boot and the PC works normally. MemTest86 tests 1–6 passed in a partial run. Similar settings failed MemTest86 earlier the same day, before a CMOS clear, so finish a full 4-pass run (see [Test before trusting](#test-before-trusting)) and record the result here.
+> **Status, 22 Oct 2026 (evening):** these settings ran for over a year and booted again earlier today. After the sticks were moved and put back, training at 5867 kept failing and the board fell back to 4000. Next to try, one at a time: Mem Over Clock Fail Count 10, then CAS 38, then 5600. Once it boots at the target speed, run the full test (see [Test before trusting](#test-before-trusting)) and record the result here.
 
 ## Hardware
 
@@ -32,6 +32,10 @@ Press **Del** at boot, then **F7** for Advanced Mode. Everything below is on the
 
 4. Leave everything else on Auto. DOCP I sets **DRAM VDD Voltage** and **DRAM VDDQ Voltage** to 1.35 V by itself.
 5. **Slots:** one kit in A2 + B2, the other kit in A1 + B1. From the CPU outward the slots are A1, A2, B1, B2; check the labels printed on the board. **Keep this layout.** One kit per channel (one kit in A1 + A2, the other in B1 + B2) was tried twice on 22 Oct 2026, once on Auto and once with these settings, and memory training never finished: it stayed on the orange DRAM light.
+6. **DRAM Timing Control → Misc.:**
+   - **Mem Over Clock Fail Count:** 10. This gives training more attempts at the target speed before the board falls back to a safe speed.
+   - **MRC Fast Boot:** Enabled, once it has booted at the target speed. The board then reuses that successful training on every boot instead of training from scratch.
+7. After it boots, check the DRAM Frequency shown at the top of Ai Tweaker. If it says 4000 instead of 5867, training failed and the board fell back to a safe speed.
 
 Also redo after a reset:
 
@@ -50,10 +54,11 @@ Unstable RAM can corrupt files without any warning, so test before using the PC 
 
 Change one thing at a time, then test again:
 
-1. **DRAM Command Rate:** 2N (in DRAM Timing Control). Intel recommends 2N for mixed sticks.
-2. **DRAM Frequency:** 5600.
-3. **DRAM Frequency:** 5200.
-4. Also set the refresh timings to the JEDEC values, which are safe for any DDR5 chip:
+1. **DRAM CAS# Latency:** 38 instead of 36, everything else unchanged.
+2. **DRAM Command Rate:** 2N (in DRAM Timing Control). Intel recommends 2N for mixed sticks.
+3. **DRAM Frequency:** 5600.
+4. **DRAM Frequency:** 5200.
+5. Also set the refresh timings to the JEDEC values, which are safe for any DDR5 chip:
 
    | DRAM Frequency | DRAM REF Cycle Time | DRAM REF Cycle Time 2 | DRAM REF Cycle Time Same Bank |
    |---|---|---|---|
@@ -61,7 +66,7 @@ Change one thing at a time, then test again:
    | 5600 | 826 | 448 | 364 |
    | 5200 | 767 | 416 | 338 |
 
-5. **Ai Overclock Tuner:** Manual, **DRAM Frequency:** 4000 (Intel's rated speed for four sticks), DRAM VDD and DRAM VDDQ Voltage 1.35 V. If even this fails, suspect hardware and test each stick alone in slot A2.
+6. **Ai Overclock Tuner:** Manual, **DRAM Frequency:** 4000 (Intel's rated speed for four sticks), DRAM VDD and DRAM VDDQ Voltage 1.35 V. If even this fails, suspect hardware and test each stick alone in slot A2.
 
 Known-good fallback: one kit alone in A2 + B2 on DOCP I / XMP I (32 GB).
 
