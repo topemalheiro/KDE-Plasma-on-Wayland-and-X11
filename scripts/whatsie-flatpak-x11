@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly remote_debugging="${QTWEBENGINE_REMOTE_DEBUGGING:-127.0.0.1:9222}"
+
+# WhatSie 5.1.0 can copy an early/light WhatsApp localStorage value back into
+# windowTheme while shutting down.  Keep the user's chosen dark mode
+# authoritative at every cold start.  automaticTheme must stay disabled or the
+# app can replace this choice with the portal value during login.
+"$HOME/.local/bin/whatsie-theme-guard" --config-only
+
+exec /usr/bin/flatpak run \
+    --socket=x11 \
+    --nosocket=wayland \
+    --env=DISPLAY="${DISPLAY:-:0}" \
+    --env=QT_QPA_PLATFORM=xcb \
+    --env=QT_STYLE_OVERRIDE=Fusion \
+    --env=QTWEBENGINE_REMOTE_DEBUGGING="$remote_debugging" \
+    --branch=stable \
+    --arch=x86_64 \
+    --command=whatsie \
+    com.ktechpit.whatsie \
+    "$@"

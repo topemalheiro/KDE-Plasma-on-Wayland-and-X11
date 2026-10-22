@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly flatpak_app="com.ktechpit.whatsie"
+
+flatpak_pid="$(
+    flatpak ps --columns=application,pid 2>/dev/null |
+        awk -v app="$flatpak_app" '$1 == app { print $2; exit }'
+)"
+
+if [[ -n "$flatpak_pid" ]] && ps -p "$flatpak_pid" >/dev/null 2>&1; then
+    exec /usr/bin/flatpak run \
+        --branch=stable \
+        --arch=x86_64 \
+        --command=whatsie \
+        "$flatpak_app" \
+        "$@"
+fi
+
+exec "$HOME/.local/bin/whatsie-tray-launcher" "$@"

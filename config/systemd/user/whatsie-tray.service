@@ -1,0 +1,17 @@
+[Unit]
+Description=WhatSie tray client with deterministic dark theme
+PartOf=graphical-session.target
+Wants=xdg-desktop-portal.service plasma-xdg-desktop-portal-kde.service
+After=plasma-workspace.target xdg-desktop-portal.service plasma-xdg-desktop-portal-kde.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/whatsie-tray-launcher
+ExecStartPost=-%h/.local/bin/whatsie-theme-guard --timeout 90
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly flatpak_app="com.ktechpit.whatsie"
+readonly x11_launcher="$HOME/.local/bin/whatsie-flatpak-x11"
+readonly launcher_pattern="^/usr/bin/kdocker .*-- $x11_launcher( .*)?$"
+
+flatpak_pid="$(
+    flatpak ps --columns=application,pid 2>/dev/null |
+        awk -v app="$flatpak_app" '$1 == app { print $2; exit }'
+)"
+
+if [[ -n "$flatpak_pid" ]] && ps -p "$flatpak_pid" >/dev/null 2>&1; then
+    exit 0
+fi
+
+if [[ -n "$flatpak_pid" ]]; then
+    flatpak kill "$flatpak_app" >/dev/null 2>&1 || true
+fi
+
+# KDocker can outlive a crashed child.  Clear only the exact managed launcher
+# before starting a replacement so boot never creates duplicate tray entries.
+pkill -TERM -f "$launcher_pattern" 2>/dev/null || true
+for _ in {1..20}; do
+    pgrep -f "$launcher_pattern" >/dev/null || break
+    sleep 0.1
+done
+pkill -KILL -f "$launcher_pattern" 2>/dev/null || true
+
+exec /usr/bin/kdocker -o -q -b -r -- "$x11_launcher" "$@"
